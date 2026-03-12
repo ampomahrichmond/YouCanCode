@@ -1,0 +1,45 @@
+# ── Core UI ───────────────────────────────────────────────────
+customtkinter>=5.2.2
+Pillow>=10.0.0
+
+# ── File formats ─────────────────────────────────────────────
+pyarrow>=14.0.0
+pandas>=2.1.0
+openpyxl>=3.1.0
+
+# ── Cloud / Azure ─────────────────────────────────────────────
+azure-storage-blob>=12.19.0
+azure-identity>=1.15.0
+
+# ── Databricks ────────────────────────────────────────────────
+databricks-sdk>=0.20.0
+
+# ── ODBC (Synapse, SQL Server, Azure SQL, Generic ODBC) ───────
+pyodbc>=5.0.0
+
+# ── Oracle ────────────────────────────────────────────────────
+# pip install oracledb        # modern (preferred)
+# pip install cx_Oracle       # legacy
+
+# ── PostgreSQL ───────────────────────────────────────────────
+# pip install psycopg2-binary
+
+# ── MySQL / MariaDB ──────────────────────────────────────────
+# pip install mysql-connector-python
+
+# ── IBM DB2 ──────────────────────────────────────────────────
+# pip install ibm_db
+
+# ── Teradata ─────────────────────────────────────────────────
+# pip install teradatasql
+
+# ── Snowflake ────────────────────────────────────────────────
+# pip install snowflake-connector-python
+
+# ── Hive / Impala ────────────────────────────────────────────
+# pip install pyhive[hive]
+
+# ── HTTP / misc ──────────────────────────────────────────────
+requests>=2.31.0
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
