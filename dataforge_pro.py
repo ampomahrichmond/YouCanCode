@@ -141,13 +141,30 @@ def smart_load(filepath: str) -> Tuple[pd.DataFrame, str]:
 
 def parse_pipe_source(filepath: str) -> pd.DataFrame:
     """
-    Parse a file whose structure is:
-      Row 0 :  ZONE_NAME|EDC_MODEL_NAME|STEWARD|MALCODE|…   ← column headers
-      Row 1+:  /TX/AVORA/AASXC/SRX|ERCD{SZX FS}|Corporate Service|EDCV|…
+    Parse a source file where:
+      Row 0 :  ZONE_NAME|EDC_MODEL_NAME|STEWARD|MAL_CODE|…  ← pipe-joined header string
+      Row 1+:  /TD/AkoraCloud/AAEDL/SRZ|EGRCL {SRZ FS}|…   ← pipe-joined data values
 
-    Also handles the degenerate case where the whole file was saved as a
-    single-column CSV and the pipe string ends up as the column *name*.
+    Handles all three storage forms seen in practice:
+      A) Excel (.xlsx/.xls) — each row's full pipe string may be split across
+         multiple Excel columns due to the 32 767-char cell limit.  We
+         concatenate every non-empty cell in the row (no extra separator) to
+         reconstruct the original pipe string, then split on "|".
+      B) Plain text / CSV where each line is one pipe string.
+      C) CSV where the pipe header ended up as the *column name* (pandas put
+         the whole header line as the first column's heading).
     """
+    ext = Path(filepath).suffix.lower()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CASE A — Excel file
+    # ════════════════════════════════════════════════════════════════════
+    if ext in (".xlsx", ".xls", ".xlsm", ".xlsb"):
+        return _parse_pipe_excel(filepath)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CASE B / C — Text-based file
+    # ════════════════════════════════════════════════════════════════════
     with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
         raw = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
 
@@ -156,17 +173,17 @@ def parse_pipe_source(filepath: str) -> pd.DataFrame:
 
     first = raw[0]
 
-    # ── Degenerate: no pipes in first line – maybe saved as single CSV column ─
+    # CASE C — no pipe in first line: maybe pandas already parsed it as CSV
+    # and the pipe-header ended up as the column name
     if "|" not in first:
         try:
             tmp = pd.read_csv(
                 filepath, dtype=str, keep_default_na=False,
                 encoding="utf-8", errors="replace",
             )
-            # Column name might itself be the pipe-header string
-            first_col_name = tmp.columns[0]
-            if "|" in first_col_name:
-                headers = [h.strip() for h in first_col_name.split("|") if h.strip()]
+            first_col = tmp.columns[0]
+            if "|" in first_col:
+                headers = [h.strip() for h in first_col.split("|") if h.strip()]
                 rows = []
                 for cell in tmp.iloc[:, 0]:
                     parts = str(cell).split("|")
@@ -177,20 +194,90 @@ def parse_pipe_source(filepath: str) -> pd.DataFrame:
             pass
         return pd.DataFrame({"content": raw})
 
-    # ── Standard: first line = pipe-separated headers ─────────────────────────
-    headers = [h.strip() for h in first.split("|")]
+    # CASE B — standard: every line is a pipe-delimited string
+    return _pipe_lines_to_df(raw)
+
+
+def _parse_pipe_excel(filepath: str) -> pd.DataFrame:
+    """
+    Read an Excel workbook where the pipe-delimited record for each row may
+    be split across multiple columns (Excel character-overflow artefact).
+
+    Strategy:
+      1. Read with header=None so we get the raw cell values.
+      2. For every row, concatenate ALL non-empty / non-NaN cells in order
+         — with NO extra separator — to reconstruct the full pipe string.
+         (The split never falls on a "|" boundary; it's a mid-token cut.)
+      3. Feed the reconstructed lines into the standard pipe→column parser.
+    """
+    # Read everything as strings, no header interpretation
+    raw_df = pd.read_excel(
+        filepath,
+        header=None,
+        dtype=str,
+        keep_default_na=False,
+    )
+
+    pipe_lines: List[str] = []
+    for _, row in raw_df.iterrows():
+        # Collect cells — preserve internal whitespace so that a mid-token
+        # split like  "EGRCL {SRZ" + " FS}"  rejoins as  "EGRCL {SRZ FS}"
+        # Only skip truly empty / NaN cells.
+        cells = [
+            str(v)
+            for v in row
+            if str(v).strip() not in ("", "nan", "None")
+        ]
+        if not cells:
+            continue
+        # Concatenate raw (no extra separator) then strip outer whitespace only
+        pipe_lines.append("".join(cells).strip())
+
+    if not pipe_lines:
+        return pd.DataFrame()
+
+    return _pipe_lines_to_df(pipe_lines)
+
+
+def _pipe_lines_to_df(lines: List[str]) -> pd.DataFrame:
+    """
+    Convert a list of pipe-delimited strings into a clean DataFrame.
+    Line 0 is the header; lines 1+ are data rows.
+    Trailing empty columns are dropped.
+    """
+    if not lines:
+        return pd.DataFrame()
+
+    # ── Headers ───────────────────────────────────────────────────────────────
+    headers = [h.strip() for h in lines[0].split("|")]
     # Drop trailing empty headers
     while headers and not headers[-1]:
         headers.pop()
-    headers = [h or f"col_{i}" for i, h in enumerate(headers)]
+    # Deduplicate silently (e.g. two "STEWARD" columns)
+    seen: Dict[str, int] = {}
+    clean_headers: List[str] = []
+    for h in headers:
+        label = h or f"col_{len(clean_headers)}"
+        if label in seen:
+            seen[label] += 1
+            clean_headers.append(f"{label}_{seen[label]}")
+        else:
+            seen[label] = 0
+            clean_headers.append(label)
 
-    rows = []
-    for line in raw[1:]:
+    # ── Data rows ─────────────────────────────────────────────────────────────
+    rows: List[List[str]] = []
+    n = len(clean_headers)
+    for line in lines[1:]:
         parts = line.split("|")
-        parts = (parts + [""] * len(headers))[: len(headers)]
+        # Pad or trim to match header count
+        parts = (parts + [""] * n)[:n]
         rows.append([p.strip() for p in parts])
 
-    df = pd.DataFrame(rows, columns=headers)
+    df = pd.DataFrame(rows, columns=clean_headers)
+
+    # Drop columns that are 100 % empty
+    df = df.loc[:, (df != "").any(axis=0)]
     return df
 
 
