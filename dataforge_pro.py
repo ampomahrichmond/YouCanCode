@@ -723,109 +723,121 @@ def compute_gaps(src_df:pd.DataFrame, ref_df:pd.DataFrame,
     gr.src_label=src_label
     gr.ref_label=ref_label
 
-    # ── Normalise helpers ─────────────────────────────────────────────────────
-    def norm_col(series:pd.Series)->pd.Series:
-        return series.astype(str).str.lower().str.strip().str.replace(r"\s+"," ",regex=True)
+    # ── Safe normalise: always returns a 1-D Series ───────────────────────────
+    def norm_series(s) -> pd.Series:
+        """Normalise a column value to lowercase stripped string Series.
+        Robust against DataFrames with duplicate column names (squeeze first)."""
+        if isinstance(s, pd.DataFrame):
+            s = s.iloc[:, 0]        # take first column if accidentally a DataFrame
+        s = pd.Series(s).astype(str)
+        s = s.str.lower().str.strip()
+        s = s.str.replace(r"\s+", " ", regex=True)
+        return s
 
     # ── Schema-level gap ──────────────────────────────────────────────────────
     if src_join_col and src_join_col in src_df.columns and \
        ref_join_col and ref_join_col in ref_df.columns:
 
-        src_schemas = norm_col(src_df[src_join_col]).dropna().unique()
-        ref_schemas = norm_col(ref_df[ref_join_col]).dropna().unique()
+        src_schemas = norm_series(src_df[src_join_col]).unique()
+        ref_schemas = norm_series(ref_df[ref_join_col]).unique()
 
-        src_set=set(s for s in src_schemas if s not in("","nan","none"))
-        ref_set=set(s for s in ref_schemas if s not in("","nan","none"))
+        src_set = {s for s in src_schemas if s not in("","nan","none")}
+        ref_set = {s for s in ref_schemas if s not in("","nan","none")}
 
-        gr.src_schema_total=len(src_set)
-        gr.ref_schema_total=len(ref_set)
+        gr.src_schema_total = len(src_set)
+        gr.ref_schema_total = len(ref_set)
 
-        # Schema in source ONLY → "In EDC but NOT in Collibra"
-        src_only_s=sorted(src_set - ref_set)
-        ref_only_s=sorted(ref_set - src_set)
-        matched_s =sorted(src_set & ref_set)
-
-        gr.schema_src_only=pd.DataFrame({
-            "Schema (Source only — in EDC, missing from Collibra)":src_only_s})
-        gr.schema_ref_only=pd.DataFrame({
-            "Schema (Ref only — in Collibra, missing from EDC)":ref_only_s})
-        gr.schema_matched =pd.DataFrame({
-            "Schema (Present in BOTH files)":matched_s})
+        gr.schema_src_only = pd.DataFrame(
+            {"Schema — In EDC, Missing from Collibra": sorted(src_set - ref_set)})
+        gr.schema_ref_only = pd.DataFrame(
+            {"Schema — In Collibra, Not in EDC": sorted(ref_set - src_set)})
+        gr.schema_matched  = pd.DataFrame(
+            {"Schema — Present in BOTH": sorted(src_set & ref_set)})
     else:
-        for attr in("schema_src_only","schema_ref_only","schema_matched"):
-            setattr(gr,attr,pd.DataFrame())
-        gr.src_schema_total=gr.ref_schema_total=0
+        for attr in ("schema_src_only","schema_ref_only","schema_matched"):
+            setattr(gr, attr, pd.DataFrame())
+        gr.src_schema_total = gr.ref_schema_total = 0
 
     # ── Table-level gap ───────────────────────────────────────────────────────
-    if src_table_col and src_table_col in src_df.columns and \
-       ref_table_col and ref_table_col in ref_df.columns:
+    # Guard: if table col same as join col, or if table col missing, skip
+    src_tbl_valid = (src_table_col and src_table_col in src_df.columns
+                     and src_table_col != src_join_col)
+    ref_tbl_valid = (ref_table_col and ref_table_col in ref_df.columns
+                     and ref_table_col != ref_join_col)
 
-        # Build normalised (schema, table) pairs for each side
-        src_cols=[c for c in [src_join_col,src_table_col] if c and c in src_df.columns]
-        ref_cols=[c for c in [ref_join_col,ref_table_col] if c and c in ref_df.columns]
+    if src_tbl_valid and ref_tbl_valid:
 
-        src_t=src_df[src_cols].copy()
-        ref_t=ref_df[ref_cols].copy()
-        for c in src_cols: src_t[c]=norm_col(src_t[c])
-        for c in ref_cols: ref_t[c]=norm_col(ref_t[c])
+        # Build de-duplicated column lists (never include same col twice)
+        src_sel = []
+        if src_join_col and src_join_col in src_df.columns:
+            src_sel.append(src_join_col)
+        src_sel.append(src_table_col)
 
-        # Drop blanks
-        src_t=src_t[src_t[src_cols[-1]].notna() &
-                    ~src_t[src_cols[-1]].isin(["","nan","none"])]
-        ref_t=ref_t[ref_t[ref_cols[-1]].notna() &
-                    ~ref_t[ref_cols[-1]].isin(["","nan","none"])]
+        ref_sel = []
+        if ref_join_col and ref_join_col in ref_df.columns:
+            ref_sel.append(ref_join_col)
+        ref_sel.append(ref_table_col)
 
-        # Deduplicate
-        src_t=src_t.drop_duplicates()
-        ref_t=ref_t.drop_duplicates()
+        # Build working frames with only those two columns, normalised
+        src_t = src_df[src_sel].copy().reset_index(drop=True)
+        ref_t = ref_df[ref_sel].copy().reset_index(drop=True)
 
-        gr.src_table_total=len(src_t)
-        gr.ref_table_total=len(ref_t)
+        for c in src_sel:
+            src_t[c] = norm_series(src_df[c])   # use original df to avoid dup issues
+        for c in ref_sel:
+            ref_t[c] = norm_series(ref_df[c])
 
-        # Rename to common column names for the merge
-        src_m=src_t.copy(); ref_m=ref_t.copy()
-        if len(src_cols)==2: src_m.columns=["__schema__","__table__"]
-        else: src_m.columns=["__table__"]
-        if len(ref_cols)==2: ref_m.columns=["__schema__","__table__"]
-        else: ref_m.columns=["__table__"]
+        # Drop blanks and deduplicate
+        src_t = src_t[norm_series(src_t[src_table_col]).isin(
+            {s for s in norm_series(src_t[src_table_col]) if s not in("","nan","none")}
+        )].drop_duplicates()
+        ref_t = ref_t[norm_series(ref_t[ref_table_col]).isin(
+            {s for s in norm_series(ref_t[ref_table_col]) if s not in("","nan","none")}
+        )].drop_duplicates()
 
-        # Full outer join
-        join_on=["__schema__","__table__"] if "__schema__" in src_m.columns else ["__table__"]
-        src_m["__in_src__"]=True
-        ref_m["__in_ref__"]=True
+        gr.src_table_total = len(src_t)
+        gr.ref_table_total = len(ref_t)
 
-        merged=src_m.merge(ref_m,on=join_on,how="outer")
-        in_src=merged["__in_src__"].fillna(False).astype(bool)
-        in_ref=merged["__in_ref__"].fillna(False).astype(bool)
+        # Rename to universal names for merging
+        has_schema = len(src_sel) == 2     # both files have schema + table cols
+        if has_schema:
+            src_t = src_t.rename(columns={src_join_col:"__schema__", src_table_col:"__table__"})
+            ref_t = ref_t.rename(columns={ref_join_col:"__schema__", ref_table_col:"__table__"})
+            join_on = ["__schema__","__table__"]
+        else:
+            src_t = src_t.rename(columns={src_table_col:"__table__"})
+            ref_t = ref_t.rename(columns={ref_table_col:"__table__"})
+            join_on = ["__table__"]
 
-        def _fmt(df_sub,src_lbl,ref_lbl)->pd.DataFrame:
-            out=df_sub[join_on].copy()
-            if "__schema__" in out.columns and "__table__" in out.columns:
-                out.columns=["Schema","Table"]
-            elif "__table__" in out.columns:
-                out.columns=["Table"]
-            return out.sort_values(list(out.columns)).reset_index(drop=True)
+        src_t["__in_src__"] = True
+        ref_t["__in_ref__"] = True
 
-        src_only=merged[ in_src & ~in_ref]
-        ref_only=merged[~in_src &  in_ref]
-        both    =merged[ in_src &  in_ref]
+        merged = src_t.merge(ref_t, on=join_on, how="outer")
+        in_src = merged["__in_src__"].fillna(False).astype(bool)
+        in_ref = merged["__in_ref__"].fillna(False).astype(bool)
 
-        src_only_df=_fmt(src_only,src_label,ref_label)
-        ref_only_df=_fmt(ref_only,src_label,ref_label)
-        both_df    =_fmt(both,    src_label,ref_label)
+        def _fmt_gap(sub, gap_label) -> pd.DataFrame:
+            cols_out = ["Schema","Table"] if has_schema else ["Table"]
+            map_from = join_on
+            out = sub[map_from].copy()
+            out.columns = cols_out
+            out.insert(0, "Gap Type", gap_label)
+            out = out.fillna("").sort_values(cols_out).reset_index(drop=True)
+            return out
 
-        # Add readable labels
-        src_only_df.insert(0,"Gap Type",f"In {src_label}  — NOT in {ref_label}")
-        ref_only_df.insert(0,"Gap Type",f"In {ref_label}  — NOT in {src_label}")
-        both_df.insert(0,   "Gap Type","Present in BOTH")
-
-        gr.table_src_only=src_only_df
-        gr.table_ref_only=ref_only_df
-        gr.table_matched =both_df
+        gr.table_src_only = _fmt_gap(
+            merged[in_src & ~in_ref],
+            f"In {src_label}  — NOT in {ref_label}")
+        gr.table_ref_only = _fmt_gap(
+            merged[~in_src & in_ref],
+            f"In {ref_label}  — NOT in {src_label}")
+        gr.table_matched  = _fmt_gap(
+            merged[in_src & in_ref],
+            "Present in BOTH")
     else:
-        for attr in("table_src_only","table_ref_only","table_matched"):
-            setattr(gr,attr,pd.DataFrame())
-        gr.src_table_total=gr.ref_table_total=0
+        for attr in ("table_src_only","table_ref_only","table_matched"):
+            setattr(gr, attr, pd.DataFrame())
+        gr.src_table_total = gr.ref_table_total = 0
 
     return gr
 
@@ -1517,23 +1529,48 @@ class App(ctk.CTk):
             self.results_df=res
 
             # ── Gap analysis (runs after matching, very fast) ─────────────────
-            cfg=self._gap_cfg
-            src_tbl=next((c for c in cfg.get("src_search",[])
-                          if re.search(r"table",c,re.I)),
-                         cfg["src_search"][0] if cfg.get("src_search") else None)
-            ref_tbl=next((c for c in cfg.get("ref_search",[])
-                          if re.search(r"table",c,re.I)),
-                         cfg["ref_search"][0] if cfg.get("ref_search") else None)
-            st("Computing gap analysis…")
-            src_nm=Path(self.src_path).stem if self.src_path else "EDC (Source)"
-            ref_nm=Path(self.ref_path).stem if self.ref_path else "Collibra (Reference)"
-            self.gap_result=compute_gaps(
-                self.src_df, self.ref_df,
-                src_join_col=cfg.get("src_join"), ref_join_col=cfg.get("ref_join"),
-                src_table_col=src_tbl, ref_table_col=ref_tbl,
-                src_label=src_nm, ref_label=ref_nm)
+            try:
+                cfg = self._gap_cfg
+                src_join = cfg.get("src_join")
+                ref_join = cfg.get("ref_join")
+                src_search = cfg.get("src_search") or []
+                ref_search = cfg.get("ref_search") or []
 
-            self.after(0,lambda stopped=self._stop_event.is_set():
+                # Pick best table column: prefer cols with "table" in name,
+                # but NEVER pick the join col (that would cause duplicate cols)
+                def _best_tbl_col(cols, join_col):
+                    # First: explicit "table" match, not same as join
+                    for c in cols:
+                        if re.search(r"table", c, re.I) and c != join_col:
+                            return c
+                    # Second: any col that's not the join col
+                    for c in cols:
+                        if c != join_col:
+                            return c
+                    return None   # all cols are the join col → skip table gap
+
+                src_tbl = _best_tbl_col(src_search, src_join)
+                ref_tbl = _best_tbl_col(ref_search, ref_join)
+
+                st("Computing gap analysis…")
+                src_nm = Path(self.src_path).stem if self.src_path else "EDC (Source)"
+                ref_nm = Path(self.ref_path).stem if self.ref_path else "Collibra (Reference)"
+                self.gap_result = compute_gaps(
+                    self.src_df, self.ref_df,
+                    src_join_col  = src_join,
+                    ref_join_col  = ref_join,
+                    src_table_col = src_tbl,
+                    ref_table_col = ref_tbl,
+                    src_label     = src_nm,
+                    ref_label     = ref_nm)
+            except Exception as gap_err:
+                import traceback as _tb
+                _tb.print_exc()
+                self.gap_result = None
+                self.after(0, lambda m=str(gap_err):
+                    self._status(f"Gap analysis skipped — {m}"))
+
+            self.after(0, lambda stopped=self._stop_event.is_set():
                        self._match_done(stopped))
         except Exception as e:
             import traceback; traceback.print_exc()
@@ -1733,19 +1770,25 @@ class App(ctk.CTk):
         if self.results_df is None: return
         df=self.results_df; gr=self.gap_result
 
+        # Safe length helper — works for None, empty df, or populated df
+        def _n(attr):
+            obj = getattr(gr, attr, None) if gr else None
+            if obj is None or not isinstance(obj, pd.DataFrame): return 0
+            return len(obj)
+
         # ── Compute summary stats ─────────────────────────────────────────────
         for w in self._sum_stat_host.winfo_children(): w.destroy()
 
-        n_match=len(df)
-        src_only_t=len(gr.table_src_only) if gr and gr.table_src_only is not None else 0
-        ref_only_t=len(gr.table_ref_only) if gr and gr.table_ref_only is not None else 0
-        matched_t =len(gr.table_matched)  if gr and gr.table_matched  is not None else 0
-        total_t=matched_t+src_only_t+ref_only_t
-        cov_pct=round(matched_t/max(total_t,1)*100,1)
+        n_match   = len(df)
+        src_only_t= _n("table_src_only")
+        ref_only_t= _n("table_ref_only")
+        matched_t = _n("table_matched")
+        total_t   = matched_t + src_only_t + ref_only_t
+        cov_pct   = round(matched_t / max(total_t,1) * 100, 1)
 
-        src_only_s=len(gr.schema_src_only) if gr and gr.schema_src_only is not None else 0
-        ref_only_s=len(gr.schema_ref_only) if gr and gr.schema_ref_only is not None else 0
-        matched_s =len(gr.schema_matched)  if gr and gr.schema_matched  is not None else 0
+        src_only_s= _n("schema_src_only")
+        ref_only_s= _n("schema_ref_only")
+        matched_s = _n("schema_matched")
 
         stats=[
             ("Match Rows",         f"{n_match:,}",        C["blue"],  "Records found in both files"),
@@ -1800,25 +1843,29 @@ class App(ctk.CTk):
             _gauge(self._table_body, matched_t,src_only_t,ref_only_t,"tables")
 
         # ── Schema gap trees in summary tab ───────────────────────────────────
-        if gr and gr.schema_src_only is not None:
-            self._schema_src_lbl.configure(text=f"{src_only_s} schema(s) in EDC only")
-            self._schema_src_tree.delete(*self._schema_src_tree.get_children())
-            self._schema_src_tree["columns"]=["Schema — EDC Only"]
-            self._schema_src_tree.column("Schema — EDC Only",width=350,anchor="w")
-            self._schema_src_tree.heading("Schema — EDC Only",text="Schema — In EDC, NOT in Collibra",anchor="w")
-            for i,(_,row) in enumerate(gr.schema_src_only.iterrows()):
-                v=list(row.values)[0]
-                self._schema_src_tree.insert("","end",values=(v,),tags=("odd" if i%2 else "even",))
+        def _fill_schema_tree(tree, df, heading_text):
+            tree.delete(*tree.get_children())
+            if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+                return
+            col = df.columns[0]
+            tree["columns"] = [col]
+            tree.heading(col, text=heading_text, anchor="w")
+            tree.column(col, width=350, anchor="w")
+            for i, (_, row) in enumerate(df.iterrows()):
+                v = str(list(row.values)[0]) if len(row.values) > 0 else ""
+                tree.insert("", "end", values=(v,), tags=("odd" if i%2 else "even",))
 
-        if gr and gr.schema_ref_only is not None:
-            self._schema_ref_lbl.configure(text=f"{ref_only_s} schema(s) in Collibra only")
-            self._schema_ref_tree.delete(*self._schema_ref_tree.get_children())
-            self._schema_ref_tree["columns"]=["Schema — Collibra Only"]
-            self._schema_ref_tree.column("Schema — Collibra Only",width=350,anchor="w")
-            self._schema_ref_tree.heading("Schema — Collibra Only",text="Schema — In Collibra, NOT in EDC",anchor="w")
-            for i,(_,row) in enumerate(gr.schema_ref_only.iterrows()):
-                v=list(row.values)[0]
-                self._schema_ref_tree.insert("","end",values=(v,),tags=("odd" if i%2 else "even",))
+        if gr:
+            n_src_s = _n("schema_src_only")
+            n_ref_s = _n("schema_ref_only")
+            self._schema_src_lbl.configure(
+                text=f"{n_src_s} schema(s) in EDC only" if n_src_s else "✅  No EDC-only schemas")
+            self._schema_ref_lbl.configure(
+                text=f"{n_ref_s} schema(s) in Collibra only" if n_ref_s else "✅  No Collibra-only schemas")
+            _fill_schema_tree(self._schema_src_tree, gr.schema_src_only,
+                              "Schema — In EDC, NOT in Collibra")
+            _fill_schema_tree(self._schema_ref_tree, gr.schema_ref_only,
+                              "Schema — In Collibra, NOT in EDC")
 
         # ── Match rows tree ────────────────────────────────────────────────────
         self._load_tree(df)
@@ -1985,18 +2032,20 @@ class App(ctk.CTk):
 
                     # ── Sheet 5: Schema gaps ──────────────────────────────────
                     if gr and gr.schema_src_only is not None:
+                        def _schema_df(df, side):
+                            if df is None or not isinstance(df,pd.DataFrame) or df.empty:
+                                return pd.DataFrame({"Schema":[],"Gap Side":[]})
+                            col=df.columns[0]
+                            out=df.rename(columns={col:"Schema"}).copy()
+                            out["Gap Side"]=side
+                            return out
                         sch_gaps=pd.concat([
-                            gr.schema_src_only.rename(columns={
-                                gr.schema_src_only.columns[0]:"Schema"}).assign(
-                                **{"Gap Side":"EDC Only"}),
-                            gr.schema_ref_only.rename(columns={
-                                gr.schema_ref_only.columns[0]:"Schema"}).assign(
-                                **{"Gap Side":"Collibra Only"}),
-                            gr.schema_matched.rename(columns={
-                                gr.schema_matched.columns[0]:"Schema"}).assign(
-                                **{"Gap Side":"Matched (Both)"}),
+                            _schema_df(gr.schema_src_only,"EDC Only"),
+                            _schema_df(gr.schema_ref_only,"Collibra Only"),
+                            _schema_df(gr.schema_matched, "Matched (Both)"),
                         ],ignore_index=True)
-                        sch_gaps.to_excel(w,sheet_name="Schema Analysis",index=False)
+                        if not sch_gaps.empty:
+                            sch_gaps.to_excel(w,sheet_name="Schema Analysis",index=False)
 
                     # ── Sheet 6: All match rows ───────────────────────────────
                     df.to_excel(w,sheet_name="All Matches",index=False)
