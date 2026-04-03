@@ -684,6 +684,152 @@ class ExactJoinEngine:
         return df
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  GAP ANALYSER  v5  — finds what is MISSING between the two files
+# ══════════════════════════════════════════════════════════════════════════════
+
+class GapResult:
+    """Container for gap-analysis output."""
+    __slots__=(
+        "src_label","ref_label",
+        # Schema-level
+        "schema_src_only","schema_ref_only","schema_matched",
+        # Table-level (schema+table pair)
+        "table_src_only","table_ref_only","table_matched",
+        # Coverage numbers
+        "src_schema_total","ref_schema_total",
+        "src_table_total", "ref_table_total",
+    )
+    def __init__(self):
+        for s in self.__slots__: setattr(self,s,None)
+
+
+def compute_gaps(src_df:pd.DataFrame, ref_df:pd.DataFrame,
+                 src_join_col:Optional[str], ref_join_col:Optional[str],
+                 src_table_col:Optional[str], ref_table_col:Optional[str],
+                 src_label:str="EDC (Source)",
+                 ref_label:str="Collibra (Reference)") -> GapResult:
+    """
+    Perform a full-outer-join gap analysis at two granularities:
+
+      Schema level  — which schema values exist only on one side?
+      Table  level  — which (schema, table) pairs exist only on one side?
+
+    Everything is normalised (lower-case, stripped) before comparison so
+    casing differences do not create false gaps.
+
+    Returns a GapResult with DataFrames and summary counts.
+    """
+    gr=GapResult()
+    gr.src_label=src_label
+    gr.ref_label=ref_label
+
+    # ── Normalise helpers ─────────────────────────────────────────────────────
+    def norm_col(series:pd.Series)->pd.Series:
+        return series.astype(str).str.lower().str.strip().str.replace(r"\s+"," ",regex=True)
+
+    # ── Schema-level gap ──────────────────────────────────────────────────────
+    if src_join_col and src_join_col in src_df.columns and \
+       ref_join_col and ref_join_col in ref_df.columns:
+
+        src_schemas = norm_col(src_df[src_join_col]).dropna().unique()
+        ref_schemas = norm_col(ref_df[ref_join_col]).dropna().unique()
+
+        src_set=set(s for s in src_schemas if s not in("","nan","none"))
+        ref_set=set(s for s in ref_schemas if s not in("","nan","none"))
+
+        gr.src_schema_total=len(src_set)
+        gr.ref_schema_total=len(ref_set)
+
+        # Schema in source ONLY → "In EDC but NOT in Collibra"
+        src_only_s=sorted(src_set - ref_set)
+        ref_only_s=sorted(ref_set - src_set)
+        matched_s =sorted(src_set & ref_set)
+
+        gr.schema_src_only=pd.DataFrame({
+            "Schema (Source only — in EDC, missing from Collibra)":src_only_s})
+        gr.schema_ref_only=pd.DataFrame({
+            "Schema (Ref only — in Collibra, missing from EDC)":ref_only_s})
+        gr.schema_matched =pd.DataFrame({
+            "Schema (Present in BOTH files)":matched_s})
+    else:
+        for attr in("schema_src_only","schema_ref_only","schema_matched"):
+            setattr(gr,attr,pd.DataFrame())
+        gr.src_schema_total=gr.ref_schema_total=0
+
+    # ── Table-level gap ───────────────────────────────────────────────────────
+    if src_table_col and src_table_col in src_df.columns and \
+       ref_table_col and ref_table_col in ref_df.columns:
+
+        # Build normalised (schema, table) pairs for each side
+        src_cols=[c for c in [src_join_col,src_table_col] if c and c in src_df.columns]
+        ref_cols=[c for c in [ref_join_col,ref_table_col] if c and c in ref_df.columns]
+
+        src_t=src_df[src_cols].copy()
+        ref_t=ref_df[ref_cols].copy()
+        for c in src_cols: src_t[c]=norm_col(src_t[c])
+        for c in ref_cols: ref_t[c]=norm_col(ref_t[c])
+
+        # Drop blanks
+        src_t=src_t[src_t[src_cols[-1]].notna() &
+                    ~src_t[src_cols[-1]].isin(["","nan","none"])]
+        ref_t=ref_t[ref_t[ref_cols[-1]].notna() &
+                    ~ref_t[ref_cols[-1]].isin(["","nan","none"])]
+
+        # Deduplicate
+        src_t=src_t.drop_duplicates()
+        ref_t=ref_t.drop_duplicates()
+
+        gr.src_table_total=len(src_t)
+        gr.ref_table_total=len(ref_t)
+
+        # Rename to common column names for the merge
+        src_m=src_t.copy(); ref_m=ref_t.copy()
+        if len(src_cols)==2: src_m.columns=["__schema__","__table__"]
+        else: src_m.columns=["__table__"]
+        if len(ref_cols)==2: ref_m.columns=["__schema__","__table__"]
+        else: ref_m.columns=["__table__"]
+
+        # Full outer join
+        join_on=["__schema__","__table__"] if "__schema__" in src_m.columns else ["__table__"]
+        src_m["__in_src__"]=True
+        ref_m["__in_ref__"]=True
+
+        merged=src_m.merge(ref_m,on=join_on,how="outer")
+        in_src=merged["__in_src__"].fillna(False).astype(bool)
+        in_ref=merged["__in_ref__"].fillna(False).astype(bool)
+
+        def _fmt(df_sub,src_lbl,ref_lbl)->pd.DataFrame:
+            out=df_sub[join_on].copy()
+            if "__schema__" in out.columns and "__table__" in out.columns:
+                out.columns=["Schema","Table"]
+            elif "__table__" in out.columns:
+                out.columns=["Table"]
+            return out.sort_values(list(out.columns)).reset_index(drop=True)
+
+        src_only=merged[ in_src & ~in_ref]
+        ref_only=merged[~in_src &  in_ref]
+        both    =merged[ in_src &  in_ref]
+
+        src_only_df=_fmt(src_only,src_label,ref_label)
+        ref_only_df=_fmt(ref_only,src_label,ref_label)
+        both_df    =_fmt(both,    src_label,ref_label)
+
+        # Add readable labels
+        src_only_df.insert(0,"Gap Type",f"In {src_label}  — NOT in {ref_label}")
+        ref_only_df.insert(0,"Gap Type",f"In {ref_label}  — NOT in {src_label}")
+        both_df.insert(0,   "Gap Type","Present in BOTH")
+
+        gr.table_src_only=src_only_df
+        gr.table_ref_only=ref_only_df
+        gr.table_matched =both_df
+    else:
+        for attr in("table_src_only","table_ref_only","table_matched"):
+            setattr(gr,attr,pd.DataFrame())
+        gr.src_table_total=gr.ref_table_total=0
+
+    return gr
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SHARED WIDGET HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -781,6 +927,8 @@ class App(ctk.CTk):
         # Data state
         self.src_path=self.ref_path=None
         self.src_df=self.ref_df=self.results_df=None
+        self.gap_result:Optional[GapResult]=None
+        self._gap_cfg:Dict={}               # stores join/search cols used in last run
         self._stop_event=threading.Event(); self._step=0
 
         # Config state
@@ -1312,6 +1460,9 @@ class App(ctk.CTk):
             messagebox.showwarning("Config","Select at least one Reference search column."); return
         mode   = self._match_mode.get()
         substr = self._substr_var.get()
+        # Remember config for gap analysis
+        self._gap_cfg=dict(src_join=src_join,ref_join=ref_join,
+                           src_search=src_s,ref_search=ref_s)
         self._stop_event.clear()
         self._run_btn.pack_forget(); self._stop_btn.pack(side="left",padx=6)
         self._prog_bar.set(0)
@@ -1364,6 +1515,24 @@ class App(ctk.CTk):
                     progress_cb=pr,status_cb=lambda m:(det(m),st(m)))
 
             self.results_df=res
+
+            # ── Gap analysis (runs after matching, very fast) ─────────────────
+            cfg=self._gap_cfg
+            src_tbl=next((c for c in cfg.get("src_search",[])
+                          if re.search(r"table",c,re.I)),
+                         cfg["src_search"][0] if cfg.get("src_search") else None)
+            ref_tbl=next((c for c in cfg.get("ref_search",[])
+                          if re.search(r"table",c,re.I)),
+                         cfg["ref_search"][0] if cfg.get("ref_search") else None)
+            st("Computing gap analysis…")
+            src_nm=Path(self.src_path).stem if self.src_path else "EDC (Source)"
+            ref_nm=Path(self.ref_path).stem if self.ref_path else "Collibra (Reference)"
+            self.gap_result=compute_gaps(
+                self.src_df, self.ref_df,
+                src_join_col=cfg.get("src_join"), ref_join_col=cfg.get("ref_join"),
+                src_table_col=src_tbl, ref_table_col=ref_tbl,
+                src_label=src_nm, ref_label=ref_nm)
+
             self.after(0,lambda stopped=self._stop_event.is_set():
                        self._match_done(stopped))
         except Exception as e:
@@ -1389,27 +1558,97 @@ class App(ctk.CTk):
                 "• Check the reference file was parsed correctly")
 
     # ══════════════════════════════════════════════════════════════════════════
-    #  PAGE 3 — RESULTS  (richer stats — NEW v3)
+    #  PAGE 3 — RESULTS  v5  (Summary + Matches + Gap tabs)
     # ══════════════════════════════════════════════════════════════════════════
     def _build_results(self):
         pg=tk.Frame(self._content,bg=C["bg"]); self._pages[3]=pg
 
+        # Top nav bar
         top=tk.Frame(pg,bg=C["bg"]); top.pack(fill="x",padx=20,pady=(12,4))
-        _lbl(top,"Match Results",C["bg"],C["text"],FH).pack(side="left")
+        _lbl(top,"Validation Report",C["bg"],C["text"],FH).pack(side="left")
         rb=tk.Frame(top,bg=C["bg"]); rb.pack(side="right")
         _back(rb,"← Reconfigure",lambda:self._goto(2))
         _navbtn(rb,"⬇  Export Full Report",self._export_results,C["green"])
         _navbtn(rb,"⬇  Export Cleaned Source",self._export_cleaned,C["teal"])
 
-        # ── Summary stat cards ────────────────────────────────────────────────
-        self._stat_host=tk.Frame(pg,bg=C["bg"]); self._stat_host.pack(fill="x",padx=20,pady=(4,6))
+        # ── TAB BAR ───────────────────────────────────────────────────────────
+        tab_bar=_card(pg); tab_bar.pack(fill="x",padx=20,pady=(4,0))
+        self._res_tab=tk.StringVar(value="summary")
+        TAB_DEFS=[
+            ("summary",  "📊  Summary",           C["blue"]),
+            ("matches",  "✅  Matches Found",      C["green"]),
+            ("src_only", "⚠  In EDC, Not Collibra",C["amber"]),
+            ("ref_only", "⚠  In Collibra, Not EDC",C["purple"]),
+        ]
+        self._tab_btns:Dict[str,tk.Label]={}
+        for val,txt,color in TAB_DEFS:
+            btn=tk.Label(tab_bar,text=txt,bg=C["card"],fg=C["text2"],
+                         font=FsB,padx=16,pady=8,cursor="hand2")
+            btn.pack(side="left")
+            btn.bind("<Button-1>",lambda e,v=val:self._switch_res_tab(v))
+            self._tab_btns[val]=btn
+        self._tab_indicator=tk.Frame(tab_bar,bg=C["blue"],height=3)
+        self._tab_indicator.place(x=0,y=0,width=0,height=0)  # moved by _switch_res_tab
 
-        # ── Two-column layout: filter+tree on left, breakdown on right ────────
-        body=tk.Frame(pg,bg=C["bg"]); body.pack(fill="both",expand=True,padx=20,pady=(0,6))
-        body.columnconfigure(0,weight=1); body.columnconfigure(1,weight=0,minsize=300)
+        # ── TAB CONTENT FRAMES ─────────────────────────────────────────────────
+        self._tab_host=tk.Frame(pg,bg=C["bg"])
+        self._tab_host.pack(fill="both",expand=True,padx=20,pady=(0,6))
 
+        self._tab_frames:Dict[str,tk.Frame]={}
+        for val,*_ in TAB_DEFS:
+            f=tk.Frame(self._tab_host,bg=C["bg"])
+            self._tab_frames[val]=f
+
+        # ── SUMMARY tab ───────────────────────────────────────────────────────
+        sf=self._tab_frames["summary"]
+        self._sum_stat_host=tk.Frame(sf,bg=C["bg"]); self._sum_stat_host.pack(fill="x",pady=(8,0))
+
+        # Two-column: left=coverage gauges, right=gap callouts
+        sg=tk.Frame(sf,bg=C["bg"]); sg.pack(fill="both",expand=True,pady=(10,0))
+        sg.columnconfigure(0,weight=1); sg.columnconfigure(1,weight=1)
+
+        # Left: schema coverage
+        self._schema_card=_card(sg,padx=16,pady=14)
+        self._schema_card.grid(row=0,column=0,sticky="nsew",padx=(0,8),pady=(0,8))
+        _lbl(self._schema_card,"Schema Coverage",C["card"],C["text"],FS).pack(anchor="w")
+        _sep(self._schema_card)
+        self._schema_body=tk.Frame(self._schema_card,bg=C["card"])
+        self._schema_body.pack(fill="both",expand=True)
+
+        # Right: table coverage
+        self._table_card=_card(sg,padx=16,pady=14)
+        self._table_card.grid(row=0,column=1,sticky="nsew",padx=(8,0),pady=(0,8))
+        _lbl(self._table_card,"Table Coverage",C["card"],C["text"],FS).pack(anchor="w")
+        _sep(self._table_card)
+        self._table_body=tk.Frame(self._table_card,bg=C["card"])
+        self._table_body.pack(fill="both",expand=True)
+
+        # Bottom: schema gap lists side by side
+        sg2=tk.Frame(sf,bg=C["bg"]); sg2.pack(fill="both",expand=True)
+        sg2.columnconfigure(0,weight=1); sg2.columnconfigure(1,weight=1)
+
+        lc=_card(sg2,padx=12,pady=12)
+        lc.grid(row=0,column=0,sticky="nsew",padx=(0,8))
+        tk.Frame(lc,bg=C["amber"],height=4).pack(fill="x",pady=(0,8))
+        self._schema_src_lbl=_lbl(lc,"",C["card"],C["amber"],FBB); self._schema_src_lbl.pack(anchor="w")
+        _lbl(lc,"Schemas in EDC source — NOT in Collibra reference",
+             C["card"],C["text3"],Fs).pack(anchor="w",pady=(0,6))
+        lth=tk.Frame(lc,bg=C["card"]); lth.pack(fill="both",expand=True)
+        self._schema_src_tree=make_tree(lth,["Schema — EDC Only"],[350])
+
+        rc=_card(sg2,padx=12,pady=12)
+        rc.grid(row=0,column=1,sticky="nsew",padx=(8,0))
+        tk.Frame(rc,bg=C["purple"],height=4).pack(fill="x",pady=(0,8))
+        self._schema_ref_lbl=_lbl(rc,"",C["card"],C["purple"],FBB); self._schema_ref_lbl.pack(anchor="w")
+        _lbl(rc,"Schemas in Collibra reference — NOT in EDC source",
+             C["card"],C["text3"],Fs).pack(anchor="w",pady=(0,6))
+        rth=tk.Frame(rc,bg=C["card"]); rth.pack(fill="both",expand=True)
+        self._schema_ref_tree=make_tree(rth,["Schema — Collibra Only"],[350])
+
+        # ── MATCHES tab ───────────────────────────────────────────────────────
+        mf=self._tab_frames["matches"]
         # Filter bar
-        fc=_card(body); fc.grid(row=0,column=0,sticky="ew",pady=(0,4),padx=(0,6))
+        fc=_card(mf); fc.pack(fill="x",pady=(8,4))
         _lbl(fc,"Search:",C["card"],C["text2"],Fs).pack(side="left",padx=10,pady=7)
         self._flt=tk.StringVar(); self._flt.trace_add("write",self._filter)
         tk.Entry(fc,textvariable=self._flt,bg=C["stripe"],fg=C["text"],
@@ -1418,118 +1657,242 @@ class App(ctk.CTk):
         self._flt_type=tk.StringVar(value="All")
         tt=ttk.Combobox(fc,textvariable=self._flt_type,
                         values=["All","Exact","Substring","Token Overlap","Fuzzy"],
-                        state="readonly",width=14,font=Fs)
+                        state="readonly",width=13,font=Fs)
         tt.pack(side="left",pady=7); tt.bind("<<ComboboxSelected>>",self._filter)
         _lbl(fc,"Min %:",C["card"],C["text2"],Fs).pack(side="left",padx=(12,4))
         self._flt_score=tk.IntVar(value=70)
         tk.Spinbox(fc,from_=0,to=100,textvariable=self._flt_score,
-                   width=5,font=Fs,command=self._filter).pack(side="left",pady=7)
-        _lbl(fc,"Confidence:",C["card"],C["text2"],Fs).pack(side="left",padx=(12,4))
-        self._flt_conf=tk.StringVar(value="All")
-        cf=ttk.Combobox(fc,textvariable=self._flt_conf,
-                        values=["All","Definite","High","Medium","Low"],
-                        state="readonly",width=10,font=Fs)
-        cf.pack(side="left",pady=7); cf.bind("<<ComboboxSelected>>",self._filter)
+                   width=4,font=Fs,command=self._filter).pack(side="left",pady=7)
         self._flt_cnt=tk.StringVar(value="")
         _lbl(fc,None,C["card"],C["text3"],Fs,textvariable=self._flt_cnt).pack(side="right",padx=12)
-
-        # Results tree
-        th=tk.Frame(body,bg=C["bg"])
-        th.grid(row=1,column=0,sticky="nsew",padx=(0,6))
-        body.rowconfigure(1,weight=1)
-        RW=[55,110,110,120,160,55,120,160,360,65,110,110]
-        self._res_tree=make_tree(th,MatchEngine.COLS,RW)
+        # Tree
+        mth=tk.Frame(mf,bg=C["bg"]); mth.pack(fill="both",expand=True)
+        RW=[55,110,110,120,160,55,120,160,360,65,100,110]
+        self._res_tree=make_tree(mth,MatchEngine.COLS,RW)
         for col in MatchEngine.COLS:
             self._res_tree.heading(col,text=col,anchor="w",
                                    command=lambda c=col:self._sort(c))
 
-        # RIGHT: breakdown panel
-        right=_card(body,padx=12,pady=12)
-        right.grid(row=0,column=1,rowspan=2,sticky="nsew")
+        # ── SOURCE-ONLY gaps tab ──────────────────────────────────────────────
+        self._build_gap_tab("src_only",
+            bg_color=C["amber"],
+            title="⚠  Tables in EDC (Source) — Missing from Collibra (Reference)",
+            subtitle="These schemas and tables were found in your EDC source file but have no matching record in Collibra.\nAction required: verify whether these should be loaded into Collibra.",
+            tree_attr="_gap_src_tree")
 
-        _lbl(right,"Breakdown",C["card"],C["text"],FS).pack(anchor="w")
-        _sep(right)
+        # ── REFERENCE-ONLY gaps tab ───────────────────────────────────────────
+        self._build_gap_tab("ref_only",
+            bg_color=C["purple"],
+            title="⚠  Tables in Collibra (Reference) — Not found in EDC (Source)",
+            subtitle="These schemas and tables exist in Collibra but were not found in the EDC source file.\nAction required: verify whether these are stale records or new additions.",
+            tree_attr="_gap_ref_tree")
 
-        # Match type distribution
-        _lbl(right,"By Match Type",C["card"],C["text"],FBB).pack(anchor="w",pady=(4,2))
-        self._breakdown_host=tk.Frame(right,bg=C["card"]); self._breakdown_host.pack(fill="x")
+    def _build_gap_tab(self,tab_key,bg_color,title,subtitle,tree_attr):
+        f=self._tab_frames[tab_key]
 
-        _sep(right)
-        # Top join values
-        _lbl(right,"Top Join Values",C["card"],C["text"],FBB).pack(anchor="w",pady=(4,2))
-        self._topjoin_host=tk.Frame(right,bg=C["card"]); self._topjoin_host.pack(fill="x")
+        banner=tk.Frame(f,bg=bg_color,padx=16,pady=10)
+        banner.pack(fill="x",pady=(8,0))
+        _lbl(banner,title,bg_color,C["text_inv"],FBB).pack(anchor="w")
+        _lbl(banner,subtitle,bg_color,C["text_inv"],("Helvetica",8),
+             justify="left",wraplength=900).pack(anchor="w",pady=(4,0))
 
-        _sep(right)
-        # Confidence distribution
-        _lbl(right,"Confidence Distribution",C["card"],C["text"],FBB).pack(anchor="w",pady=(4,2))
-        self._conf_host=tk.Frame(right,bg=C["card"]); self._conf_host.pack(fill="x")
+        # Stat row
+        stat_row=tk.Frame(f,bg=C["bg"]); stat_row.pack(fill="x",pady=(8,4))
+        attr_stat=f"_gap_{tab_key}_stats"
+        setattr(self,attr_stat,stat_row)
 
-        _sep(right)
-        # Column coverage
-        _lbl(right,"Source Column Coverage",C["card"],C["text"],FBB).pack(anchor="w",pady=(4,2))
-        self._cov_host=tk.Frame(right,bg=C["card"]); self._cov_host.pack(fill="x")
+        # Search
+        sc=_card(f); sc.pack(fill="x",pady=(0,4))
+        _lbl(sc,"Search:",C["card"],C["text2"],Fs).pack(side="left",padx=8,pady=6)
+        sv=tk.StringVar()
+        setattr(self,f"_gap_{tab_key}_flt",sv)
+        tk.Entry(sc,textvariable=sv,bg=C["stripe"],fg=C["text"],
+                 font=Fs,relief="flat",width=30).pack(side="left",padx=4)
+        sv.trace_add("write",lambda *_,k=tab_key:self._filter_gap(k))
+        cnt=tk.StringVar(value="")
+        setattr(self,f"_gap_{tab_key}_cnt",cnt)
+        _lbl(sc,None,C["card"],C["text3"],Fs,textvariable=cnt).pack(side="right",padx=10)
+
+        # Tree
+        th=tk.Frame(f,bg=C["bg"]); th.pack(fill="both",expand=True)
+        tree=make_tree(th,["Gap Type","Schema","Table"],[180,200,350])
+        setattr(self,tree_attr,tree)
+
+    def _switch_res_tab(self,tab:str):
+        self._res_tab.set(tab)
+        for v,f in self._tab_frames.items(): f.pack_forget()
+        self._tab_frames[tab].pack(fill="both",expand=True)
+        # Update tab button styles
+        for v,btn in self._tab_btns.items():
+            if v==tab:
+                btn.configure(bg=C["blue_lt"],fg=C["blue_dk"],font=FBB)
+            else:
+                btn.configure(bg=C["card"],fg=C["text2"],font=FsB)
 
     def _populate_results(self):
         if self.results_df is None: return
-        df=self.results_df
+        df=self.results_df; gr=self.gap_result
 
-        # ── Stat cards ─────────────────────────────────────────────────────────
-        for w in self._stat_host.winfo_children(): w.destroy()
-        definite=df["Confidence"].str.contains("Definite",na=False).sum()
-        high=df["Confidence"].str.contains("High",na=False).sum()
-        exact=(df["Match Type"]=="Exact").sum()
+        # ── Compute summary stats ─────────────────────────────────────────────
+        for w in self._sum_stat_host.winfo_children(): w.destroy()
+
+        n_match=len(df)
+        src_only_t=len(gr.table_src_only) if gr and gr.table_src_only is not None else 0
+        ref_only_t=len(gr.table_ref_only) if gr and gr.table_ref_only is not None else 0
+        matched_t =len(gr.table_matched)  if gr and gr.table_matched  is not None else 0
+        total_t=matched_t+src_only_t+ref_only_t
+        cov_pct=round(matched_t/max(total_t,1)*100,1)
+
+        src_only_s=len(gr.schema_src_only) if gr and gr.schema_src_only is not None else 0
+        ref_only_s=len(gr.schema_ref_only) if gr and gr.schema_ref_only is not None else 0
+        matched_s =len(gr.schema_matched)  if gr and gr.schema_matched  is not None else 0
+
         stats=[
-            ("Total Matches",f"{len(df):,}",C["blue"]),
-            ("Definite (≥95%)",f"{definite:,}",C["green"]),
-            ("High (85-94%)",f"{high:,}",C["teal"]),
-            ("Exact Match",f"{exact:,}",C["slate"]),
-            ("Avg Score",f"{df['Score %'].mean():.1f}%",C["amber"]),
-            ("Unique Join Values",f"{df['Join Src Val'].nunique():,}",C["purple"]),
-            ("Src Rows Matched",f"{df['Src Row'].nunique():,}",C["navy2"]),
+            ("Match Rows",         f"{n_match:,}",        C["blue"],  "Records found in both files"),
+            ("Tables Matched",     f"{matched_t:,}",      C["green"], "Unique table pairs in both"),
+            (f"Coverage",          f"{cov_pct}%",         C["teal"],  "Tables matched ÷ total unique"),
+            ("EDC Only — Tables",  f"{src_only_t:,}",     C["amber"], "In EDC, missing from Collibra"),
+            ("Collibra Only",      f"{ref_only_t:,}",     C["purple"],"In Collibra, not in EDC"),
+            ("Schemas Matched",    f"{matched_s:,}",      C["slate"], "Schemas present in both"),
+            ("Schema Gaps",        f"{src_only_s+ref_only_s:,}",C["red"],"Schemas only on one side"),
         ]
-        for lbl,val,color in stats:
-            c=_card(self._stat_host,padx=12,pady=6)
+        for lbl,val,color,tip in stats:
+            c=_card(self._sum_stat_host,padx=11,pady=7)
             c.pack(side="left",padx=(0,5))
-            _lbl(c,val,C["card"],color,("Georgia",13,"bold")).pack()
-            _lbl(c,lbl,C["card"],C["text2"],Fs).pack()
+            _lbl(c,val,C["card"],color,("Georgia",15,"bold")).pack()
+            _lbl(c,lbl,C["card"],C["text"],Fs).pack()
+            _lbl(c,tip,C["card"],C["text3"],("Helvetica",7),wraplength=100).pack()
 
-        # ── Breakdown panel ────────────────────────────────────────────────────
-        def _bar_row(host,label,count,total,color):
-            r=tk.Frame(host,bg=C["card"]); r.pack(fill="x",pady=1)
-            _lbl(r,f"{label}",C["card"],C["text"],Fs,width=16,anchor="w").pack(side="left")
-            pct=count/max(total,1)
-            bar_outer=tk.Frame(r,bg=C["border"],height=10,width=140)
-            bar_outer.pack(side="left",padx=4); bar_outer.pack_propagate(False)
-            tk.Frame(bar_outer,bg=color,height=10,
-                     width=int(pct*140)).pack(side="left",fill="y")
-            _lbl(r,f"{count:,}",C["card"],C["text2"],Fs).pack(side="left",padx=4)
+        # ── Schema coverage gauges ────────────────────────────────────────────
+        for w in self._schema_body.winfo_children(): w.destroy()
+        for w in self._table_body.winfo_children(): w.destroy()
 
-        for w in self._breakdown_host.winfo_children(): w.destroy()
-        for mtype,color in [("Exact",C["green"]),("Substring",C["blue_mid"]),
-                            ("Token Overlap",C["amber"]),("Fuzzy",C["red"])]:
-            n=(df["Match Type"]==mtype).sum()
-            _bar_row(self._breakdown_host,mtype,n,len(df),color)
+        def _gauge(host,matched,src_only,ref_only,unit):
+            total=matched+src_only+ref_only
+            pct=round(matched/max(total,1)*100,1)
+            # Big percentage
+            _lbl(host,f"{pct}%",C["card"],
+                 C["green"] if pct>=90 else C["amber"] if pct>=70 else C["red"],
+                 ("Georgia",28,"bold")).pack(pady=(6,0))
+            _lbl(host,f"of {total:,} {unit} are in both files",
+                 C["card"],C["text2"],Fs).pack()
+            tk.Frame(host,bg=C["bg"],height=8).pack()
+            # Stacked bar
+            bar_w=260; bar_h=18
+            bar=tk.Frame(host,bg=C["border"],width=bar_w,height=bar_h)
+            bar.pack(); bar.pack_propagate(False)
+            if total>0:
+                for n,color in [(matched,C["green"]),(src_only,C["amber"]),(ref_only,C["purple"])]:
+                    w_seg=int(n/total*bar_w)
+                    if w_seg>0:
+                        tk.Frame(bar,bg=color,width=w_seg,height=bar_h).pack(side="left",fill="y")
+            # Legend
+            leg=tk.Frame(host,bg=C["card"]); leg.pack(pady=(6,0))
+            for n,color,label in [(matched,C["green"],"Both"),
+                                   (src_only,C["amber"],"EDC only"),
+                                   (ref_only,C["purple"],"Collibra only")]:
+                r=tk.Frame(leg,bg=C["card"]); r.pack(side="left",padx=6)
+                tk.Frame(r,bg=color,width=10,height=10).pack(side="left",pady=2)
+                _lbl(r,f"  {n:,} {label}",C["card"],C["text"],Fs).pack(side="left")
 
-        for w in self._topjoin_host.winfo_children(): w.destroy()
-        top5=df.groupby("Join Src Val").size().sort_values(ascending=False).head(8)
-        for jv,cnt in top5.items():
-            r=tk.Frame(self._topjoin_host,bg=C["card"]); r.pack(fill="x",pady=1)
-            _lbl(r,str(jv)[:20],C["card"],C["text"],Fs,anchor="w",width=20).pack(side="left")
-            _lbl(r,f"{cnt:,} matches",C["card"],C["text2"],Fs).pack(side="left",padx=6)
+        if gr:
+            _gauge(self._schema_body,matched_s,src_only_s,ref_only_s,"schemas")
+            _gauge(self._table_body, matched_t,src_only_t,ref_only_t,"tables")
 
-        for w in self._conf_host.winfo_children(): w.destroy()
-        for lbl,color in [("Definite",C["green"]),("High",C["teal"]),
-                          ("Medium",C["amber"]),("Low",C["red"])]:
-            n=df["Confidence"].str.contains(lbl,na=False).sum()
-            _bar_row(self._conf_host,lbl,n,len(df),color)
+        # ── Schema gap trees in summary tab ───────────────────────────────────
+        if gr and gr.schema_src_only is not None:
+            self._schema_src_lbl.configure(text=f"{src_only_s} schema(s) in EDC only")
+            self._schema_src_tree.delete(*self._schema_src_tree.get_children())
+            self._schema_src_tree["columns"]=["Schema — EDC Only"]
+            self._schema_src_tree.column("Schema — EDC Only",width=350,anchor="w")
+            self._schema_src_tree.heading("Schema — EDC Only",text="Schema — In EDC, NOT in Collibra",anchor="w")
+            for i,(_,row) in enumerate(gr.schema_src_only.iterrows()):
+                v=list(row.values)[0]
+                self._schema_src_tree.insert("","end",values=(v,),tags=("odd" if i%2 else "even",))
 
-        for w in self._cov_host.winfo_children(): w.destroy()
-        for col,cnt in df.groupby("Src Column").size().sort_values(ascending=False).items():
-            r=tk.Frame(self._cov_host,bg=C["card"]); r.pack(fill="x",pady=1)
-            _lbl(r,str(col)[:22],C["card"],C["text"],Fs,anchor="w",width=22).pack(side="left")
-            _lbl(r,f"{cnt:,}",C["card"],C["text2"],Fs).pack(side="left",padx=4)
+        if gr and gr.schema_ref_only is not None:
+            self._schema_ref_lbl.configure(text=f"{ref_only_s} schema(s) in Collibra only")
+            self._schema_ref_tree.delete(*self._schema_ref_tree.get_children())
+            self._schema_ref_tree["columns"]=["Schema — Collibra Only"]
+            self._schema_ref_tree.column("Schema — Collibra Only",width=350,anchor="w")
+            self._schema_ref_tree.heading("Schema — Collibra Only",text="Schema — In Collibra, NOT in EDC",anchor="w")
+            for i,(_,row) in enumerate(gr.schema_ref_only.iterrows()):
+                v=list(row.values)[0]
+                self._schema_ref_tree.insert("","end",values=(v,),tags=("odd" if i%2 else "even",))
 
+        # ── Match rows tree ────────────────────────────────────────────────────
         self._load_tree(df)
+
+        # ── Gap tab trees ──────────────────────────────────────────────────────
+        self._populate_gap_tab("src_only", gr.table_src_only if gr else None)
+        self._populate_gap_tab("ref_only", gr.table_ref_only if gr else None)
+
+        # ── Switch to summary tab ──────────────────────────────────────────────
+        self._switch_res_tab("summary")
+
+    def _populate_gap_tab(self,tab_key:str,df:Optional[pd.DataFrame]):
+        tree=getattr(self,f"_gap_{'src' if 'src' in tab_key else 'ref'}_tree")
+        stat_row=getattr(self,f"_gap_{tab_key}_stats")
+        cnt_var=getattr(self,f"_gap_{tab_key}_cnt")
+
+        # Store for search filtering
+        setattr(self,f"_gap_{tab_key}_full",df)
+
+        for w in stat_row.winfo_children(): w.destroy()
+        if df is None or df.empty:
+            _lbl(stat_row,"  ✅  No gaps found — all records are present on both sides!",
+                 C["bg"],C["green"],FBB).pack(side="left",pady=6,padx=4)
+            cnt_var.set("0 records")
+            tree.delete(*tree.get_children())
+            return
+
+        n=len(df)
+        color=C["amber"] if "src" in tab_key else C["purple"]
+        c=_card(stat_row,padx=14,pady=6); c.pack(side="left")
+        _lbl(c,f"{n:,}",C["card"],color,("Georgia",16,"bold")).pack()
+        _lbl(c,"Gap records",C["card"],C["text2"],Fs).pack()
+
+        # Count by schema
+        if "Schema" in df.columns:
+            n_schemas=df["Schema"].nunique()
+            c2=_card(stat_row,padx=14,pady=6); c2.pack(side="left",padx=(6,0))
+            _lbl(c2,f"{n_schemas:,}",C["card"],color,("Georgia",16,"bold")).pack()
+            _lbl(c2,"Schemas affected",C["card"],C["text2"],Fs).pack()
+
+        self._load_gap_tree(tree,df,cnt_var)
+
+    def _load_gap_tree(self,tree,df:pd.DataFrame,cnt_var:tk.StringVar):
+        tree.delete(*tree.get_children())
+        if df is None or df.empty:
+            cnt_var.set("0 records"); return
+        cols=list(df.columns)
+        tree["columns"]=cols
+        widths={"Gap Type":180,"Schema":200,"Table":350}
+        for c in cols:
+            w=widths.get(c,200)
+            tree.heading(c,text=c,anchor="w")
+            tree.column(c,width=w,minwidth=60,anchor="w")
+        gap_color=C["amber_lt"] if "EDC" in (df["Gap Type"].iloc[0] if len(df)>0 else "") else C["purple_lt"]
+        fg=C["amber"] if "EDC" in (df["Gap Type"].iloc[0] if len(df)>0 else "") else C["purple"]
+        cap=10_000
+        for i,(_,row) in enumerate(df.head(cap).iterrows()):
+            vals=[str(row.get(c,""))[:200] for c in cols]
+            tag="odd" if i%2 else "even"
+            tree.insert("","end",values=vals,tags=(tag,))
+        if len(df)>cap:
+            tree.insert("","end",values=[f"  ⋯  {len(df)-cap:,} more — export to see all"]+[""]*( len(cols)-1))
+        cnt_var.set(f"{min(len(df),cap):,} of {len(df):,}")
+
+    def _filter_gap(self,tab_key:str):
+        df=getattr(self,f"_gap_{tab_key}_full",None)
+        tree=getattr(self,f"_gap_{'src' if 'src' in tab_key else 'ref'}_tree")
+        cnt_var=getattr(self,f"_gap_{tab_key}_cnt")
+        flt_var=getattr(self,f"_gap_{tab_key}_flt")
+        if df is None or df.empty: return
+        q=flt_var.get().strip().lower()
+        if q:
+            df=df[df.apply(lambda r:any(q in str(v).lower() for v in r),axis=1)]
+        self._load_gap_tree(tree,df,cnt_var)
 
     def _load_tree(self,df:pd.DataFrame):
         tree=self._res_tree; tree.delete(*tree.get_children())
@@ -1550,8 +1913,6 @@ class App(ctk.CTk):
         t=self._flt_type.get()
         if t!="All": df=df[df["Match Type"]==t]
         df=df[df["Score %"]>=self._flt_score.get()]
-        conf=self._flt_conf.get()
-        if conf!="All": df=df[df["Confidence"].str.contains(conf,na=False)]
         self._load_tree(df)
 
     _sasc:Dict[str,bool]={}
@@ -1569,34 +1930,98 @@ class App(ctk.CTk):
             messagebox.showinfo("Export","No results yet."); return
         path=filedialog.asksaveasfilename(defaultextension=".xlsx",
             filetypes=[("Excel Workbook","*.xlsx"),("CSV","*.csv")],
-            title="Export Full Match Report")
+            title="Export Full Validation Report")
         if not path: return
         try:
+            gr=self.gap_result
             if path.endswith(".csv"):
                 self.results_df.to_csv(path,index=False,encoding="utf-8-sig")
             else:
                 df=self.results_df
                 with pd.ExcelWriter(path,engine="openpyxl") as w:
+                    # ── Sheet 1: Executive Summary ────────────────────────────
+                    if gr:
+                        n_match=len(df)
+                        src_only_t=len(gr.table_src_only) if gr.table_src_only is not None else 0
+                        ref_only_t=len(gr.table_ref_only) if gr.table_ref_only is not None else 0
+                        matched_t =len(gr.table_matched)  if gr.table_matched  is not None else 0
+                        total_t=matched_t+src_only_t+ref_only_t
+                        cov=round(matched_t/max(total_t,1)*100,1)
+                        summary=pd.DataFrame([
+                            {"Metric":"Source File",       "Value":str(self.src_path)},
+                            {"Metric":"Reference File",    "Value":str(self.ref_path)},
+                            {"Metric":"Match Rows Found",  "Value":n_match},
+                            {"Metric":"Tables Matched (both files)","Value":matched_t},
+                            {"Metric":"Tables — EDC only (GAPS)","Value":src_only_t},
+                            {"Metric":"Tables — Collibra only (GAPS)","Value":ref_only_t},
+                            {"Metric":"Total Unique Tables","Value":total_t},
+                            {"Metric":"Coverage %",        "Value":f"{cov}%"},
+                            {"Metric":"Schemas — EDC only","Value":len(gr.schema_src_only) if gr.schema_src_only is not None else 0},
+                            {"Metric":"Schemas — Collibra only","Value":len(gr.schema_ref_only) if gr.schema_ref_only is not None else 0},
+                            {"Metric":"Schemas matched",   "Value":len(gr.schema_matched) if gr.schema_matched is not None else 0},
+                        ])
+                        summary.to_excel(w,sheet_name="Executive Summary",index=False)
+
+                    # ── Sheet 2: All Gaps (combined) ──────────────────────────
+                    if gr:
+                        parts=[]
+                        if gr.table_src_only is not None and not gr.table_src_only.empty:
+                            parts.append(gr.table_src_only)
+                        if gr.table_ref_only is not None and not gr.table_ref_only.empty:
+                            parts.append(gr.table_ref_only)
+                        if parts:
+                            pd.concat(parts,ignore_index=True).to_excel(
+                                w,sheet_name="ALL GAPS",index=False)
+
+                    # ── Sheet 3: EDC-only gaps ────────────────────────────────
+                    if gr and gr.table_src_only is not None and not gr.table_src_only.empty:
+                        gr.table_src_only.to_excel(
+                            w,sheet_name=f"In EDC — NOT Collibra",index=False)
+
+                    # ── Sheet 4: Collibra-only gaps ───────────────────────────
+                    if gr and gr.table_ref_only is not None and not gr.table_ref_only.empty:
+                        gr.table_ref_only.to_excel(
+                            w,sheet_name=f"In Collibra — NOT EDC",index=False)
+
+                    # ── Sheet 5: Schema gaps ──────────────────────────────────
+                    if gr and gr.schema_src_only is not None:
+                        sch_gaps=pd.concat([
+                            gr.schema_src_only.rename(columns={
+                                gr.schema_src_only.columns[0]:"Schema"}).assign(
+                                **{"Gap Side":"EDC Only"}),
+                            gr.schema_ref_only.rename(columns={
+                                gr.schema_ref_only.columns[0]:"Schema"}).assign(
+                                **{"Gap Side":"Collibra Only"}),
+                            gr.schema_matched.rename(columns={
+                                gr.schema_matched.columns[0]:"Schema"}).assign(
+                                **{"Gap Side":"Matched (Both)"}),
+                        ],ignore_index=True)
+                        sch_gaps.to_excel(w,sheet_name="Schema Analysis",index=False)
+
+                    # ── Sheet 6: All match rows ───────────────────────────────
                     df.to_excel(w,sheet_name="All Matches",index=False)
-                    # Exact matches only
+
+                    # ── Sheet 7: Exact matches only ───────────────────────────
                     df[df["Match Type"]=="Exact"].to_excel(
                         w,sheet_name="Exact Matches",index=False)
-                    # Summary by join value
-                    summ=(df.groupby("Join Src Val")
-                          .agg(Match_Count=("Score %","count"),
-                               Avg_Score=("Score %","mean"),
-                               Max_Score=("Score %","max"),
-                               Exact_Count=("Match Type",lambda x:(x=="Exact").sum()))
-                          .reset_index().sort_values("Match_Count",ascending=False))
-                    summ.to_excel(w,sheet_name="Summary by Join Value",index=False)
-                    # Cleaned source
+
+                    # ── Sheet 8+: Cleaned files ───────────────────────────────
                     if self.src_df is not None:
                         self.src_df.to_excel(w,sheet_name="Cleaned Source",index=False)
-                    # Reference (with parsed cols if added)
                     if self.ref_df is not None:
                         self.ref_df.to_excel(w,sheet_name="Reference File",index=False)
+
             self._status(f"Exported → {Path(path).name}")
-            messagebox.showinfo("Exported",f"Saved:\n{path}")
+            messagebox.showinfo("Exported",
+                f"Full validation report saved:\n{path}\n\n"
+                "Sheets included:\n"
+                "  • Executive Summary\n"
+                "  • ALL GAPS (combined)\n"
+                "  • In EDC — NOT Collibra\n"
+                "  • In Collibra — NOT EDC\n"
+                "  • Schema Analysis\n"
+                "  • All Matches  +  Exact Matches\n"
+                "  • Cleaned Source  +  Reference File")
         except Exception as e:
             messagebox.showerror("Export Error",str(e))
 
