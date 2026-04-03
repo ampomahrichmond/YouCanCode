@@ -483,6 +483,207 @@ def _confidence_label(score:float)->str:
     return "⚡  Low"
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  EXACT JOIN ENGINE  v4  (SQL-style, fully vectorised, handles 1M+ rows)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class ExactJoinEngine:
+    """
+    High-performance exact-match engine using pandas merge.
+
+    Architecture
+    ────────────
+    1. Normalise both files' join columns to lowercase / stripped strings.
+    2. Pre-filter source to rows whose join key actually exists in the
+       reference — eliminates the bulk of rows in O(n) with a set lookup.
+    3. Inner-merge the filtered source chunk with the (small) reference on
+       the normalised join key.  pandas merge is implemented in C and handles
+       millions of rows in seconds.
+    4. For each (src_search_col, ref_search_col) pair, apply vectorised
+       comparisons over the merged frame:
+           • Exact  — normalised string equality
+           • Substring — one value contained in the other (numpy array loop,
+             fast because the merged frame is typically small after join)
+    5. Collect result rows, deduplicate, return.
+
+    Progress
+    ────────
+    Source is processed in CHUNK_SIZE slices. After every chunk, progress_cb
+    is called with a float in [0,1] and status_cb with a human-readable string.
+    The stop_event is checked at the start of every chunk.
+    """
+
+    COLS = MatchEngine.COLS          # reuse same schema → results page unchanged
+    CHUNK_SIZE = 500_000             # rows per chunk (tune for memory vs. granularity)
+
+    def run(self,
+            src_df:         pd.DataFrame,
+            ref_df:         pd.DataFrame,
+            src_join_col:   Optional[str],
+            ref_join_col:   Optional[str],
+            src_search_cols:List[str],
+            ref_search_cols:List[str],
+            include_substring: bool = True,
+            stop_event:     Optional[threading.Event] = None,
+            progress_cb     = None,
+            status_cb       = None) -> pd.DataFrame:
+
+        # ── Validate columns ──────────────────────────────────────────────────
+        src_join_col = src_join_col if src_join_col and src_join_col in src_df.columns else None
+        ref_join_col = ref_join_col if ref_join_col and ref_join_col in ref_df.columns else None
+        src_s = [c for c in src_search_cols if c in src_df.columns]
+        ref_s = [c for c in ref_search_cols if c in ref_df.columns]
+        if not src_s or not ref_s:
+            return pd.DataFrame(columns=self.COLS)
+
+        # ── Prepare reference (normalise join key once, add _r_ prefix) ───────
+        ref_w = ref_df.reset_index(drop=True).copy()
+        ref_w.insert(0, "__ref_row__", range(1, len(ref_w)+1))
+        if ref_join_col:
+            ref_w["__jk__"] = (ref_w[ref_join_col]
+                               .astype(str).str.lower().str.strip())
+        else:
+            ref_w["__jk__"] = "__all__"
+
+        # Rename all ref columns with _r_ prefix to avoid collision after merge
+        ref_rename = {c: f"_r_{c}" for c in ref_w.columns if not c.startswith("__")}
+        ref_w = ref_w.rename(columns=ref_rename)
+        ref_s_r = [f"_r_{c}" for c in ref_s]          # prefixed ref search col names
+        ref_jcol_r = f"_r_{ref_join_col}" if ref_join_col else None
+
+        # Set of valid join keys in ref (for fast pre-filter)
+        valid_jk = set(ref_w["__jk__"].unique()) - {"", "nan", "none"}
+
+        n_src    = len(src_df)
+        all_rows:List[Dict] = []
+
+        for i0 in range(0, n_src, self.CHUNK_SIZE):
+            if stop_event and stop_event.is_set():
+                break
+
+            i1  = min(i0 + self.CHUNK_SIZE, n_src)
+            pct = i1 / n_src
+
+            # ── Slice and prefix source chunk ─────────────────────────────────
+            chunk = src_df.iloc[i0:i1].reset_index(drop=True).copy()
+            chunk.insert(0, "__src_row__", range(i0+1, i0+len(chunk)+1))
+            if src_join_col:
+                chunk["__jk__"] = (chunk[src_join_col]
+                                   .astype(str).str.lower().str.strip())
+            else:
+                chunk["__jk__"] = "__all__"
+
+            # Pre-filter: keep only rows whose join key appears in ref
+            if src_join_col and valid_jk:
+                chunk = chunk[chunk["__jk__"].isin(valid_jk)]
+
+            if chunk.empty:
+                if progress_cb: progress_cb(pct)
+                if status_cb: status_cb(
+                    f"Scanned {i1:,}/{n_src:,} rows  ·  "
+                    f"{len(all_rows):,} matches  (no join keys matched in this block)")
+                continue
+
+            # Rename source columns with _s_ prefix
+            src_rename = {c: f"_s_{c}" for c in chunk.columns if not c.startswith("__")}
+            chunk = chunk.rename(columns=src_rename)
+            src_s_s  = [f"_s_{c}" for c in src_s]          # prefixed src search cols
+            src_jcol_s = f"_s_{src_join_col}" if src_join_col else None
+
+            # ── Inner merge on join key ───────────────────────────────────────
+            merged = chunk.merge(ref_w, on="__jk__", how="inner")
+            if merged.empty:
+                if progress_cb: progress_cb(pct)
+                continue
+
+            merged_len = len(merged)
+
+            # ── Compare each search column pair ───────────────────────────────
+            for sc_s in src_s_s:
+                if sc_s not in merged.columns: continue
+                sv = merged[sc_s].astype(str).str.lower().str.strip()
+                sc_orig = sc_s[3:]          # strip _s_ prefix for labelling
+
+                for rc_r in ref_s_r:
+                    if rc_r not in merged.columns: continue
+                    rv = merged[rc_r].astype(str).str.lower().str.strip()
+                    rc_orig = rc_r[3:]      # strip _r_ prefix
+
+                    # Exact match (vectorised)
+                    exact_mask = (sv == rv) & (sv.str.len() >= 2)
+
+                    # Substring match (numpy loop — fast for typical merged sizes)
+                    if include_substring:
+                        sa = sv.values; ra = rv.values
+                        sub_arr = np.fromiter(
+                            (len(a)>=2 and len(b)>=2 and a!=b and (a in b or b in a)
+                             for a,b in zip(sa,ra)),
+                            dtype=bool, count=merged_len)
+                        match_mask = exact_mask | pd.Series(sub_arr, index=merged.index)
+                    else:
+                        match_mask = exact_mask
+
+                    hits = merged[match_mask]
+                    if hits.empty: continue
+
+                    # ── Build result rows fully vectorised ────────────────────
+                    h = hits.copy()
+                    is_ex = (h[sc_s].str.lower().str.strip() ==
+                             h[rc_r].str.lower().str.strip())
+
+                    jv_s_col = (h[src_jcol_s].astype(str)
+                                if src_jcol_s and src_jcol_s in h.columns
+                                else pd.Series("", index=h.index))
+                    jv_r_col = (h[ref_jcol_r].astype(str)
+                                if ref_jcol_r and ref_jcol_r in h.columns
+                                else h["__jk__"])
+
+                    h["__mtype__"]  = np.where(is_ex, "Exact", "Substring")
+                    h["__score__"]  = np.where(is_ex, 100.0,   92.0)
+                    h["__conf__"]   = np.where(is_ex, "★★★  Definite", "★★☆  High")
+                    h["__jvs__"]    = jv_s_col
+                    h["__jvr__"]    = jv_r_col
+                    h["__sv__"]     = h[sc_s].astype(str)
+                    h["__rv__"]     = h[rc_r].astype(str)
+                    h["__detail__"] = (
+                        "JOIN: " + (src_join_col or "?") + "='" + h["__jvs__"] +
+                        "' ↔ " + (ref_join_col or "?") + "='" + h["__jvr__"] +
+                        "'  |  MATCH: " + sc_orig + " '" + h["__sv__"] +
+                        "' = " + rc_orig + " '" + h["__rv__"] +
+                        "'  [" + h["__mtype__"] + "]"
+                    )
+
+                    batch = pd.DataFrame({
+                        "Src Row":      h["__src_row__"].values,
+                        "Join Src Val": h["__jvs__"].values,
+                        "Join Ref Val": h["__jvr__"].values,
+                        "Src Column":   sc_orig,
+                        "Src Value":    h["__sv__"].values,
+                        "Ref Row":      h["__ref_row__"].values,
+                        "Ref Column":   rc_orig,
+                        "Ref Value":    h["__rv__"].values,
+                        "Match Detail": h["__detail__"].values,
+                        "Score %":      h["__score__"].values,
+                        "Match Type":   h["__mtype__"].values,
+                        "Confidence":   h["__conf__"].values,
+                    })
+                    all_rows.append(batch)
+
+            if progress_cb: progress_cb(pct)
+            if status_cb:
+                status_cb(f"Processed {i1:,}/{n_src:,} rows  ·  {len(all_rows):,} matches found")
+
+        if not all_rows:
+            return pd.DataFrame(columns=self.COLS)
+
+        df = pd.concat(all_rows, ignore_index=True)
+        df.drop_duplicates(
+            subset=["Src Row","Src Column","Ref Row","Ref Column"],
+            keep="first", inplace=True)
+        df.sort_values(["Join Src Val","Score %"], ascending=[True,False], inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        return df
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SHARED WIDGET HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -588,6 +789,10 @@ class App(ctk.CTk):
         self._hier_col_var  = tk.StringVar()
         self._src_search_vars:Dict[str,tk.BooleanVar]={}
         self._ref_search_vars:Dict[str,tk.BooleanVar]={}
+        self._match_mode    = tk.StringVar(value="exact")
+        self._substr_var    = tk.BooleanVar(value=True)
+        self._use_pipe      = tk.BooleanVar(value=True)
+        self._use_pipe_ref  = tk.BooleanVar(value=False)
 
         # Preview search state
         self._prev_search_var = tk.StringVar()
@@ -666,13 +871,15 @@ class App(ctk.CTk):
             _lbl(c,title,C["card"],C["text"],FS).pack(pady=(6,2))
             _lbl(c,subtitle,C["card"],C["text2"],Fs,justify="center").pack()
             if col==0:
-                self._use_pipe=tk.BooleanVar(value=True)
                 tk.Checkbutton(c,text="First row has pipe-separated column headers",
                                variable=self._use_pipe,bg=C["card"],fg=C["text2"],
                                font=Fs,activebackground=C["card"],
                                selectcolor=C["blue_lt"]).pack(pady=(8,0))
             else:
-                _lbl(c,"",C["card"],C["text"],FB).pack()
+                tk.Checkbutton(c,text="Reference file also has pipe-separated headers",
+                               variable=self._use_pipe_ref,bg=C["card"],fg=C["text2"],
+                               font=Fs,activebackground=C["card"],
+                               selectcolor=C["teal_lt"]).pack(pady=(8,0))
             btn=tk.Button(c,text=f"Browse {title}…",bg=color,fg=C["text_inv"],
                           font=FBB,relief="flat",padx=16,pady=8,cursor="hand2",
                           command=browse_cmd)
@@ -726,9 +933,16 @@ class App(ctk.CTk):
                  else smart_load(self.src_path)[0])
             src=src.apply(lambda c:c.map(lambda x:str(x).strip()))
             src=src.loc[:,(src!="").any(axis=0)]; src=src.loc[:,~src.columns.duplicated()]
-            ref,ref_m=smart_load(self.ref_path)
+
+            # Reference — apply same pipe-parse if the user checked it
+            if self._use_pipe_ref.get():
+                ref=parse_pipe_source(self.ref_path)
+                ref_m="pipe-delimited (parsed)"
+            else:
+                ref,ref_m=smart_load(self.ref_path)
             ref=ref.apply(lambda c:c.map(lambda x:str(x).strip()))
             ref=ref.loc[:,(ref!="").any(axis=0)]; ref=ref.loc[:,~ref.columns.duplicated()]
+
             self.src_df=src; self.ref_df=ref
             self.after(0,lambda:self._parse_done(ref_m))
         except Exception as e:
@@ -903,10 +1117,46 @@ class App(ctk.CTk):
 
         _lbl(left,"Match Settings",C["card"],C["text"],FS).pack(anchor="w")
         _sep(left)
-        _lbl(left,"Similarity Threshold",C["card"],C["text"],FBB).pack(anchor="w")
-        _lbl(left,"Higher = fewer but more precise matches",C["card"],C["text3"],Fs
-             ).pack(anchor="w",pady=(0,4))
-        tr=tk.Frame(left,bg=C["card"]); tr.pack(fill="x",pady=(0,8))
+
+        # ── Match Mode ────────────────────────────────────────────────────────
+        _lbl(left,"Match Mode",C["card"],C["text"],FBB).pack(anchor="w")
+        self._match_mode=tk.StringVar(value="exact")
+        modes=[
+            ("exact",  "⚡ Exact Join  (SQL-style, fastest)",
+             "Uses pandas merge. Handles 1M+ rows in\nseconds. No fuzzy — join + exact/substring only.",
+             C["teal"]),
+            ("fuzzy",  "🔍 Fuzzy Match  (slower, finds near-matches)",
+             "Uses rapidfuzz within join groups.\nBetter recall but slower on large files.",
+             C["blue"]),
+        ]
+        self._mode_frames:Dict[str,tk.Frame]={}
+        for val,label,desc,color in modes:
+            rb_row=tk.Frame(left,bg=C["card"]); rb_row.pack(fill="x",pady=(3,0))
+            tk.Radiobutton(rb_row,text=label,variable=self._match_mode,value=val,
+                           bg=C["card"],fg=color,font=FsB,
+                           activebackground=C["card"],selectcolor=C["stripe"],
+                           command=self._on_mode_change).pack(anchor="w")
+            _lbl(left,desc,C["card"],C["text3"],("Helvetica",8),
+                 justify="left",wraplength=220).pack(anchor="w",padx=16,pady=(0,2))
+
+        _sep(left)
+
+        # Substring toggle (exact mode only)
+        self._substr_var=tk.BooleanVar(value=True)
+        self._substr_chk=tk.Checkbutton(left,text="Include Substring matches",
+                                         variable=self._substr_var,
+                                         bg=C["card"],fg=C["text"],font=Fs,
+                                         activebackground=C["card"],selectcolor=C["teal_lt"])
+        self._substr_chk.pack(anchor="w")
+        _lbl(left,"e.g.  'table_name' found inside  'schema.table_name'",
+             C["card"],C["text3"],("Helvetica",8)).pack(anchor="w",padx=16,pady=(0,6))
+
+        # Threshold (fuzzy mode only)
+        self._thresh_frame=tk.Frame(left,bg=C["card"]); self._thresh_frame.pack(fill="x")
+        _lbl(self._thresh_frame,"Similarity Threshold",C["card"],C["text"],FBB).pack(anchor="w")
+        _lbl(self._thresh_frame,"Higher = fewer but more precise matches",
+             C["card"],C["text3"],Fs).pack(anchor="w",pady=(0,4))
+        tr=tk.Frame(self._thresh_frame,bg=C["card"]); tr.pack(fill="x",pady=(0,8))
         self._thresh_lbl=tk.Label(tr,text="70%",bg=C["card"],fg=C["blue"],
                                    font=("Georgia",13,"bold"),width=5)
         self._thresh_lbl.pack(side="right")
@@ -919,25 +1169,21 @@ class App(ctk.CTk):
                  ).pack(side="left",fill="x",expand=True)
 
         _sep(left)
-        _lbl(left,"How join + fuzzy works",C["card"],C["text"],FBB).pack(anchor="w")
-        _lbl(left,
-             "1. Join col groups ref rows by exact\n"
-             "   value (e.g. schema = 'aare')\n"
-             "2. Within that group, fuzzy-compare\n"
-             "   source search cols vs ref search cols\n"
-             "3. Anti-false-positive guard:\n"
-             "   • min 3 chars\n"
-             "   • length ratio ≥ 0.25\n"
-             "   • bigram overlap ≥ 0.15\n"
-             "   • combined rapidfuzz score",
-             C["card"],C["text2"],Fs,justify="left",wraplength=220
-             ).pack(anchor="w",pady=(0,8))
 
-        _sep(left)
+        # ── Progress ──────────────────────────────────────────────────────────
+        _lbl(left,"Progress",C["card"],C["text"],FBB).pack(anchor="w")
         self._prog_var=tk.StringVar(value="")
-        tk.Label(left,textvariable=self._prog_var,bg=C["card"],fg=C["text2"],font=Fs).pack(anchor="w")
-        self._prog_bar=ctk.CTkProgressBar(left,width=220,height=6)
-        self._prog_bar.set(0); self._prog_bar.pack(pady=4,anchor="w")
+        self._prog_detail=tk.StringVar(value="")
+        tk.Label(left,textvariable=self._prog_var,bg=C["card"],
+                 fg=C["text2"],font=FsB).pack(anchor="w",pady=(2,0))
+        self._prog_bar=ctk.CTkProgressBar(left,width=220,height=10,
+                                           corner_radius=4,
+                                           progress_color=C["teal"],
+                                           fg_color=C["border"])
+        self._prog_bar.set(0); self._prog_bar.pack(pady=(3,2),anchor="w")
+        tk.Label(left,textvariable=self._prog_detail,bg=C["card"],
+                 fg=C["text3"],font=("Helvetica",8),wraplength=220,
+                 justify="left").pack(anchor="w")
 
         # MIDDLE: source columns
         mid=_card(row3,padx=12,pady=12)
@@ -969,6 +1215,14 @@ class App(ctk.CTk):
 
     def _tog(self,d:Dict[str,tk.BooleanVar],v:bool):
         for var in d.values(): var.set(v)
+
+    def _on_mode_change(self):
+        """Show/hide threshold slider based on match mode."""
+        mode=self._match_mode.get()
+        if mode=="exact":
+            self._thresh_frame.pack_forget()
+        else:
+            self._thresh_frame.pack(fill="x")
 
     def _do_parse_hier(self):
         col=self._hier_col_var.get()
@@ -1056,32 +1310,62 @@ class App(ctk.CTk):
             messagebox.showwarning("Config","Select at least one Source search column."); return
         if not ref_s:
             messagebox.showwarning("Config","Select at least one Reference search column."); return
+        mode   = self._match_mode.get()
+        substr = self._substr_var.get()
         self._stop_event.clear()
         self._run_btn.pack_forget(); self._stop_btn.pack(side="left",padx=6)
-        self._prog_bar.set(0); self._prog_var.set(""); self._busy("Building engine…")
+        self._prog_bar.set(0)
+        self._prog_bar.configure(progress_color=C["teal"] if mode=="exact" else C["blue"])
+        self._prog_var.set(""); self._prog_detail.set("")
+        self._busy(f"{'Exact Join' if mode=='exact' else 'Fuzzy Match'} engine starting…")
         threading.Thread(target=self._match_worker,
-                         args=(self._thresh_var.get(),src_join,ref_join,src_s,ref_s),
+                         args=(mode,self._thresh_var.get(),src_join,ref_join,
+                               src_s,ref_s,substr),
                          daemon=True).start()
 
     def _do_stop(self):
         self._stop_event.set()
         self._stop_btn.configure(state="disabled",text="Stopping…")
-        self._status("Stop requested — finishing current row…")
+        self._status("Stop requested — finishing current chunk…")
 
-    def _match_worker(self,threshold,src_join,ref_join,src_s,ref_s):
+    def _match_worker(self,mode,threshold,src_join,ref_join,src_s,ref_s,substr):
         try:
-            engine=MatchEngine(threshold=threshold)
-            def st(m): self.after(0,lambda msg=m:self._status(msg))
-            def pr(p): self.after(0,lambda v=p:self._prog_bar.set(v))
-            def pl(m): self.after(0,lambda msg=m:self._prog_var.set(msg))
-            st("Building join index…")
-            engine.fit(self.ref_df,ref_join_col=ref_join,
-                       ref_search_cols=ref_s,status_cb=st)
-            res=engine.run(self.src_df,src_join_col=src_join,
-                           src_search_cols=src_s,stop_event=self._stop_event,
-                           progress_cb=pr,status_cb=lambda m:(pl(m),st(m)))
+            def st(m):  self.after(0,lambda msg=m: self._status(msg))
+            def pr(p):  self.after(0,lambda v=p:   self._prog_bar.set(min(float(v),1.0)))
+            def det(m): self.after(0,lambda msg=m: self._prog_detail.set(msg))
+            def pl(m):
+                self.after(0,lambda msg=m: (
+                    self._prog_var.set(msg),
+                    self._status(msg)
+                ))
+
+            if mode=="exact":
+                # ── Vectorised pandas join (fast path) ────────────────────────
+                engine=ExactJoinEngine()
+                pl("Building join index…")
+                res=engine.run(
+                    self.src_df, self.ref_df,
+                    src_join_col=src_join,   ref_join_col=ref_join,
+                    src_search_cols=src_s,   ref_search_cols=ref_s,
+                    include_substring=substr,
+                    stop_event=self._stop_event,
+                    progress_cb=pr,
+                    status_cb=lambda m:(det(m),st(m)),
+                )
+            else:
+                # ── Fuzzy match (thorough path) ───────────────────────────────
+                engine=MatchEngine(threshold=threshold)
+                pl("Building fuzzy index…")
+                engine.fit(self.ref_df,ref_join_col=ref_join,
+                           ref_search_cols=ref_s,status_cb=st)
+                res=engine.run(
+                    self.src_df,src_join_col=src_join,
+                    src_search_cols=src_s,stop_event=self._stop_event,
+                    progress_cb=pr,status_cb=lambda m:(det(m),st(m)))
+
             self.results_df=res
-            self.after(0,lambda stopped=self._stop_event.is_set():self._match_done(stopped))
+            self.after(0,lambda stopped=self._stop_event.is_set():
+                       self._match_done(stopped))
         except Exception as e:
             import traceback; traceback.print_exc()
             self.after(0,lambda ex=e:self._on_error("Matching Error",ex))
@@ -1089,17 +1373,20 @@ class App(ctk.CTk):
     def _match_done(self,stopped:bool=False):
         n=len(self.results_df) if self.results_df is not None else 0
         self._prog_bar.set(1.0)
+        mode_lbl="Exact Join" if self._match_mode.get()=="exact" else "Fuzzy Match"
         self._prog_var.set(f"{'Stopped — ' if stopped else 'Complete — '}{n:,} matches")
+        self._prog_detail.set(f"Mode: {mode_lbl}  ·  {n:,} result rows")
         self._stop_btn.pack_forget(); self._stop_btn.configure(state="normal",text="⏹  Stop")
         self._run_btn.pack(side="left",padx=6); self._busy()
-        self._status(f"{'Stopped' if stopped else 'Done'} — {n:,} matches found")
+        self._status(f"{'Stopped' if stopped else 'Done'} [{mode_lbl}] — {n:,} matches found")
         if n>0: self._populate_results(); self._goto(3)
         else:
             messagebox.showinfo("No Matches",
-                "No matches found.\n\nTry:\n"
-                "• Lower the threshold (currently {:.0f}%)\n"
-                "• Check the join columns point to the same data\n"
-                "• Select more search columns".format(self._thresh_var.get()*100))
+                "No matches found.\n\nTips:\n"
+                "• Verify the join columns point to the same data\n"
+                "• Try 'Include Substring matches' in Exact mode\n"
+                "• Switch to Fuzzy Match for near-matches\n"
+                "• Check the reference file was parsed correctly")
 
     # ══════════════════════════════════════════════════════════════════════════
     #  PAGE 3 — RESULTS  (richer stats — NEW v3)
