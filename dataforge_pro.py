@@ -940,19 +940,37 @@ class App(ctk.CTk):
         self.src_path=self.ref_path=None
         self.src_df=self.ref_df=self.results_df=None
         self.gap_result:Optional[GapResult]=None
-        self._gap_cfg:Dict={}               # stores join/search cols used in last run
         self._stop_event=threading.Event(); self._step=0
 
-        # Config state
-        self._src_join_var  = tk.StringVar()
-        self._ref_join_var  = tk.StringVar()
+        # New v5 validation state
+        self._val_srz_only:Optional[pd.DataFrame]=None
+        self._val_edc_only:Optional[pd.DataFrame]=None
+        self._val_sch_matched:List[str]=[]
+        self._val_sch_srz_only:List[str]=[]
+        self._val_sch_edc_only:List[str]=[]
+        self._val_ref_nm:str="SRZ"
+        self._val_src_nm:str="EDC"
+        self._val_ref_total:int=0
+        self._val_src_total:int=0
+
+        # Config state (column mapping)
         self._hier_col_var  = tk.StringVar()
-        self._src_search_vars:Dict[str,tk.BooleanVar]={}
-        self._ref_search_vars:Dict[str,tk.BooleanVar]={}
-        self._match_mode    = tk.StringVar(value="exact")
-        self._substr_var    = tk.BooleanVar(value=True)
+        self._ref_schema_var= tk.StringVar()
+        self._ref_table_var = tk.StringVar()
+        self._src_schema_var= tk.StringVar()
+        self._src_table_var = tk.StringVar()
         self._use_pipe      = tk.BooleanVar(value=True)
         self._use_pipe_ref  = tk.BooleanVar(value=False)
+        # Keep these for any remaining references in non-replaced code
+        self._src_join_var  = tk.StringVar()
+        self._ref_join_var  = tk.StringVar()
+        self._match_mode    = tk.StringVar(value="exact")
+        self._thresh_var    = tk.DoubleVar(value=0.70)
+        self._substr_var    = tk.BooleanVar(value=True)
+        self._src_search_vars:Dict[str,tk.BooleanVar]={}
+        self._ref_search_vars:Dict[str,tk.BooleanVar]={}
+        self._prog_var      = tk.StringVar(value="")
+        self._prog_detail   = tk.StringVar(value="")
 
         # Preview search state
         self._prev_search_var = tk.StringVar()
@@ -1193,22 +1211,723 @@ class App(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
     #  PAGE 2 — CONFIGURE  (Full-Name parser + Join selector — NEW v3)
     # ══════════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
+    #  PAGE 2 — CONFIGURE  (v5: simple column mapping, no fuzzy settings)
+    # ══════════════════════════════════════════════════════════════════════════
     def _build_configure(self):
         pg=tk.Frame(self._content,bg=C["bg"]); self._pages[2]=pg
 
         # Top nav
         top=tk.Frame(pg,bg=C["bg"]); top.pack(fill="x",padx=20,pady=(12,6))
-        _lbl(top,"Configure Matching",C["bg"],C["text"],FH).pack(side="left")
+        _lbl(top,"Configure Validation",C["bg"],C["text"],FH).pack(side="left")
         rbar=tk.Frame(top,bg=C["bg"]); rbar.pack(side="right")
         _back(rbar,"← Preview",lambda:self._goto(1))
         self._stop_btn=tk.Button(rbar,text="⏹  Stop",bg=C["red"],fg=C["text_inv"],
                                  font=FBB,relief="flat",padx=14,pady=6,cursor="hand2",
                                  command=self._do_stop)
-        self._run_btn=tk.Button(rbar,text="▶  Run Matching Engine",
+        self._run_btn=tk.Button(rbar,text="▶  Run Validation",
                                 bg=C["teal"],fg=C["text_inv"],font=FBB,
                                 relief="flat",padx=18,pady=6,cursor="hand2",
                                 command=self._do_match)
         self._run_btn.pack(side="left",padx=6)
+
+        outer=tk.Frame(pg,bg=C["bg"]); outer.pack(fill="both",expand=True,padx=20,pady=(0,8))
+
+        # ── Banner: what this page does ───────────────────────────────────────
+        banner=_card(outer,padx=18,pady=14); banner.pack(fill="x",pady=(0,10))
+        brow=tk.Frame(banner,bg=C["card"]); brow.pack(fill="x")
+        tk.Frame(brow,bg=C["blue"],width=4).pack(side="left",fill="y",padx=(0,12))
+        btxt=tk.Frame(brow,bg=C["card"]); btxt.pack(side="left",fill="both",expand=True)
+        _lbl(btxt,"How Validation Works",C["card"],C["text"],FS).pack(anchor="w")
+        _lbl(btxt,
+             "Map the Schema column and Table column from each file. "
+             "The engine builds exact sets from each side and computes three groups:\n"
+             "  ✅  Matched — schema+table pairs present in BOTH files\n"
+             "  ⚠   In SRZ only — present in SRZ reference but MISSING from EDC source  ← gaps to fix\n"
+             "  ℹ   In EDC only — in EDC source but not in SRZ reference",
+             C["card"],C["text2"],Fs,justify="left",wraplength=900).pack(anchor="w",pady=(4,0))
+
+        # ── Optional: Full-Name parser (ref side) ─────────────────────────────
+        hier_card=_card(outer,padx=16,pady=10); hier_card.pack(fill="x",pady=(0,10))
+        hrow=tk.Frame(hier_card,bg=C["card"]); hrow.pack(fill="x")
+        _lbl(hrow,"📐  Parse Hierarchical Column (optional)",C["card"],C["slate"],FsB).pack(side="left")
+        _lbl(hrow,"  Splits  ZONE>DB>SCHEMA>TABLE  strings into separate columns",
+             C["card"],C["text3"],Fs).pack(side="left",padx=10)
+        hrow2=tk.Frame(hier_card,bg=C["card"]); hrow2.pack(fill="x",pady=(6,0))
+        _lbl(hrow2,"Column to parse:",C["card"],C["text"],Fs).pack(side="left")
+        self._hier_col_cb=ttk.Combobox(hrow2,textvariable=self._hier_col_var,
+                                        state="readonly",font=Fs,width=30)
+        self._hier_col_cb.pack(side="left",padx=8)
+        tk.Button(hrow2,text="Parse Now",bg=C["amber_lt"],fg=C["amber"],font=FsB,
+                  relief="flat",padx=10,pady=3,cursor="hand2",
+                  command=self._do_parse_hier).pack(side="left")
+        self._hier_status=_lbl(hrow2,"",C["card"],C["teal"],Fs); self._hier_status.pack(side="left",padx=10)
+
+        # ── Column Mapping ────────────────────────────────────────────────────
+        map_card=_card(outer,padx=18,pady=16); map_card.pack(fill="x",pady=(0,10))
+        _lbl(map_card,"Column Mapping",C["card"],C["text"],FS).pack(anchor="w")
+        _sep(map_card)
+
+        # Two-column header labels
+        hdr_row=tk.Frame(map_card,bg=C["card"]); hdr_row.pack(fill="x",pady=(0,8))
+        tk.Frame(hdr_row,bg=C["card"],width=160).pack(side="left")  # label spacer
+        lh=tk.Frame(hdr_row,bg=C["teal"],padx=10,pady=4); lh.pack(side="left")
+        _lbl(lh,"SRZ Reference File  (the authoritative list)",C["teal"],C["text_inv"],FsB).pack()
+        _lbl(hdr_row,"  ↔  ",C["card"],C["text2"],FBB).pack(side="left")
+        rh=tk.Frame(hdr_row,bg=C["blue"],padx=10,pady=4); rh.pack(side="left")
+        _lbl(rh,"EDC Source File  (what was loaded)",C["blue"],C["text_inv"],FsB).pack()
+
+        # Schema row
+        sr=tk.Frame(map_card,bg=C["card"]); sr.pack(fill="x",pady=5)
+        _lbl(sr,"Schema column:",C["card"],C["slate"],FBB,width=20,anchor="w").pack(side="left")
+        self._ref_schema_var=tk.StringVar()
+        self._ref_schema_cb=ttk.Combobox(sr,textvariable=self._ref_schema_var,
+                                          state="readonly",font=Fs,width=30)
+        self._ref_schema_cb.pack(side="left",padx=(0,6))
+        _lbl(sr,"  ↔  ",C["card"],C["text2"],FBB).pack(side="left")
+        self._src_schema_var=tk.StringVar()
+        self._src_schema_cb=ttk.Combobox(sr,textvariable=self._src_schema_var,
+                                          state="readonly",font=Fs,width=30)
+        self._src_schema_cb.pack(side="left",padx=(6,0))
+
+        # Table row
+        tr2=tk.Frame(map_card,bg=C["card"]); tr2.pack(fill="x",pady=5)
+        _lbl(tr2,"Table column:",C["card"],C["slate"],FBB,width=20,anchor="w").pack(side="left")
+        self._ref_table_var=tk.StringVar()
+        self._ref_table_cb=ttk.Combobox(tr2,textvariable=self._ref_table_var,
+                                         state="readonly",font=Fs,width=30)
+        self._ref_table_cb.pack(side="left",padx=(0,6))
+        _lbl(tr2,"  ↔  ",C["card"],C["text2"],FBB).pack(side="left")
+        self._src_table_var=tk.StringVar()
+        self._src_table_cb=ttk.Combobox(tr2,textvariable=self._src_table_var,
+                                         state="readonly",font=Fs,width=30)
+        self._src_table_cb.pack(side="left",padx=(6,0))
+
+        _lbl(map_card,
+             "Tip: for SRZ 'Name' column (col A) → select it as the Table column. "
+             "For SRZ 'Asset' column (col D) → use as Schema. "
+             "Case differences are ignored automatically.",
+             C["card"],C["text3"],Fs,wraplength=880).pack(anchor="w",pady=(8,0))
+
+        # ── Progress ──────────────────────────────────────────────────────────
+        prog_card=_card(outer,padx=18,pady=12); prog_card.pack(fill="x")
+        _lbl(prog_card,"Progress",C["card"],C["text"],FBB).pack(anchor="w")
+        self._prog_var   =tk.StringVar(value="Ready — click Run Validation to start.")
+        self._prog_detail=tk.StringVar(value="")
+        tk.Label(prog_card,textvariable=self._prog_var,
+                 bg=C["card"],fg=C["text2"],font=FsB).pack(anchor="w",pady=(4,0))
+        self._prog_bar=ctk.CTkProgressBar(prog_card,width=500,height=12,
+                                           corner_radius=4,
+                                           progress_color=C["teal"],
+                                           fg_color=C["border"])
+        self._prog_bar.set(0); self._prog_bar.pack(pady=(4,2),anchor="w")
+        tk.Label(prog_card,textvariable=self._prog_detail,
+                 bg=C["card"],fg=C["text3"],font=Fs,wraplength=600,
+                 justify="left").pack(anchor="w")
+
+    def _do_parse_hier(self):
+        col=self._hier_col_var.get()
+        if not col or self.ref_df is None: return
+        try:
+            self.ref_df=parse_hierarchical_column(self.ref_df,col)
+            new_cols=[c for c in self.ref_df.columns if c.startswith("parsed_")]
+            self._hier_status.configure(text=f"✓  Added: {', '.join(new_cols)}")
+            self._populate_configure()
+            self._status(f"Parsed '{col}' → {len(new_cols)} new columns")
+        except Exception as e:
+            messagebox.showerror("Parse Error",str(e))
+
+    def _populate_configure(self):
+        if self.src_df is None or self.ref_df is None: return
+        src_cols=list(self.src_df.columns)
+        ref_cols=list(self.ref_df.columns)
+
+        # Hier detector
+        hier_cands=detect_hierarchical_columns(self.ref_df)
+        self._hier_col_cb["values"]=ref_cols
+        if not self._hier_col_var.get() or self._hier_col_var.get() not in ref_cols:
+            self._hier_col_var.set(hier_cands[0] if hier_cands else ref_cols[0])
+
+        # SRZ (ref) schema column default → parsed_schema, or col containing "asset","schema","malcode"
+        self._ref_schema_cb["values"]=ref_cols
+        def _best(cols,patterns,fallback):
+            for p in patterns:
+                c=next((x for x in cols if re.search(p,x,re.I)),None)
+                if c: return c
+            return fallback
+        ref_schema_dflt=_best(ref_cols,
+            [r"^asset$",r"parsed_schema",r"schema",r"mal.?code",r"community"],
+            ref_cols[0] if ref_cols else "")
+        if not self._ref_schema_var.get() or self._ref_schema_var.get() not in ref_cols:
+            self._ref_schema_var.set(ref_schema_dflt)
+
+        # SRZ (ref) table column default → parsed_table, Name, or col with "table","name"
+        self._ref_table_cb["values"]=ref_cols
+        ref_table_dflt=_best(ref_cols,
+            [r"^name$",r"parsed_table",r"table.?name",r"asset.?name",r"object"],
+            ref_cols[min(1,len(ref_cols)-1)] if ref_cols else "")
+        if not self._ref_table_var.get() or self._ref_table_var.get() not in ref_cols:
+            self._ref_table_var.set(ref_table_dflt)
+
+        # EDC (src) schema column
+        self._src_schema_cb["values"]=src_cols
+        src_schema_dflt=_best(src_cols,
+            [r"schema.?name",r"^schema$",r"mal.?code"],
+            src_cols[0] if src_cols else "")
+        if not self._src_schema_var.get() or self._src_schema_var.get() not in src_cols:
+            self._src_schema_var.set(src_schema_dflt)
+
+        # EDC (src) table column
+        self._src_table_cb["values"]=src_cols
+        src_table_dflt=_best(src_cols,
+            [r"table.?name",r"^table$",r"object.?name"],
+            src_cols[min(1,len(src_cols)-1)] if src_cols else "")
+        if not self._src_table_var.get() or self._src_table_var.get() not in src_cols:
+            self._src_table_var.set(src_table_dflt)
+
+    # ── Run / Stop ────────────────────────────────────────────────────────────
+    def _do_match(self):
+        ref_schema=self._ref_schema_var.get()
+        ref_table =self._ref_table_var.get()
+        src_schema=self._src_schema_var.get()
+        src_table =self._src_table_var.get()
+
+        if not all([ref_schema,ref_table,src_schema,src_table]):
+            messagebox.showwarning("Configuration",
+                "Please select Schema and Table columns for both files."); return
+        if ref_schema not in self.ref_df.columns:
+            messagebox.showwarning("Configuration",
+                f"Column '{ref_schema}' not found in Reference file."); return
+        if src_table not in self.src_df.columns:
+            messagebox.showwarning("Configuration",
+                f"Column '{src_table}' not found in Source file."); return
+
+        self._stop_event.clear()
+        self._run_btn.pack_forget(); self._stop_btn.pack(side="left",padx=6)
+        self._prog_bar.set(0)
+        self._prog_bar.configure(progress_color=C["teal"])
+        self._prog_var.set("Starting validation…"); self._prog_detail.set("")
+        self._busy("Validating…")
+
+        threading.Thread(
+            target=self._match_worker,
+            args=(ref_schema,ref_table,src_schema,src_table),
+            daemon=True).start()
+
+    def _do_stop(self):
+        self._stop_event.set()
+        self._stop_btn.configure(state="disabled",text="Stopping…")
+        self._status("Stop requested…")
+
+    def _match_worker(self,ref_schema,ref_table,src_schema,src_table):
+        try:
+            def st(m):  self.after(0,lambda msg=m:self._status(msg))
+            def pr(p):  self.after(0,lambda v=p:self._prog_bar.set(min(float(v),1.0)))
+            def pv(m):  self.after(0,lambda msg=m:self._prog_var.set(msg))
+            def pd2(m): self.after(0,lambda msg=m:self._prog_detail.set(msg))
+
+            src_nm=Path(self.src_path).stem if self.src_path else "EDC"
+            ref_nm=Path(self.ref_path).stem if self.ref_path else "SRZ"
+
+            pv("Normalising SRZ reference…"); pr(0.10)
+            st("Normalising SRZ reference data…")
+
+            def norm(s):
+                return (pd.Series(s).astype(str)
+                        .str.lower().str.strip()
+                        .str.replace(r"\s+"," ",regex=True))
+
+            # ── Build normalised (schema, table) sets ─────────────────────────
+            # SRZ side (reference — the authoritative list)
+            ref_s=norm(self.ref_df[ref_schema])
+            ref_t=norm(self.ref_df[ref_table])
+            ref_pairs=pd.DataFrame({"schema":ref_s,"table":ref_t})
+            ref_pairs=ref_pairs[
+                ref_pairs["schema"].notna()&(~ref_pairs["schema"].isin(["","nan","none"]))&
+                ref_pairs["table"].notna() &(~ref_pairs["table"].isin(["","nan","none"]))
+            ].drop_duplicates().reset_index(drop=True)
+
+            pv("Normalising EDC source…"); pr(0.25)
+            pd2(f"SRZ: {len(ref_pairs):,} unique (schema, table) pairs")
+            st("Normalising EDC source data…")
+
+            # EDC side (source — what was loaded)
+            src_s=norm(self.src_df[src_schema])
+            src_t=norm(self.src_df[src_table])
+            src_pairs=pd.DataFrame({"schema":src_s,"table":src_t})
+            src_pairs=src_pairs[
+                src_pairs["schema"].notna()&(~src_pairs["schema"].isin(["","nan","none"]))&
+                src_pairs["table"].notna() &(~src_pairs["table"].isin(["","nan","none"]))
+            ].drop_duplicates().reset_index(drop=True)
+
+            pv("Running set comparison…"); pr(0.50)
+            pd2(f"SRZ: {len(ref_pairs):,}  ·  EDC: {len(src_pairs):,} unique pairs")
+            st("Computing matches and gaps…")
+
+            if self._stop_event.is_set():
+                self.after(0,lambda:self._match_done(True)); return
+
+            # ── Full outer join — the core set comparison ─────────────────────
+            ref_pairs["__in_ref__"]=True
+            src_pairs["__in_src__"]=True
+
+            merged=ref_pairs.merge(src_pairs,on=["schema","table"],how="outer")
+            in_ref=merged["__in_ref__"].fillna(False).astype(bool)
+            in_src=merged["__in_src__"].fillna(False).astype(bool)
+
+            pv("Building result tables…"); pr(0.80)
+
+            def _clean(df):
+                out=df[["schema","table"]].copy().fillna("")
+                out.columns=["Schema","Table"]
+                return out.sort_values(["Schema","Table"]).reset_index(drop=True)
+
+            matched_df  = _clean(merged[ in_ref &  in_src])
+            srz_only_df = _clean(merged[ in_ref & ~in_src])
+            edc_only_df = _clean(merged[~in_ref &  in_src])
+
+            # ── Schema-level summary ──────────────────────────────────────────
+            ref_schemas=set(ref_pairs["schema"].unique())
+            src_schemas=set(src_pairs["schema"].unique())
+            sch_matched =sorted(ref_schemas & src_schemas)
+            sch_srz_only=sorted(ref_schemas - src_schemas)
+            sch_edc_only=sorted(src_schemas - ref_schemas)
+
+            pv("Running gap analysis…"); pr(0.95)
+            self.gap_result=compute_gaps(
+                self.src_df, self.ref_df,
+                src_join_col=src_schema, ref_join_col=ref_schema,
+                src_table_col=src_table, ref_table_col=ref_table,
+                src_label=src_nm, ref_label=ref_nm)
+
+            # ── Package results ───────────────────────────────────────────────
+            self.results_df=matched_df      # the matched pairs
+            self._val_srz_only=srz_only_df  # SRZ records missing from EDC  ← GAPS
+            self._val_edc_only=edc_only_df  # EDC records not in SRZ
+            self._val_sch_matched =sch_matched
+            self._val_sch_srz_only=sch_srz_only
+            self._val_sch_edc_only=sch_edc_only
+            self._val_ref_nm=ref_nm
+            self._val_src_nm=src_nm
+            self._val_ref_total=len(ref_pairs)
+            self._val_src_total=len(src_pairs)
+
+            pr(1.0)
+            self.after(0,lambda stopped=self._stop_event.is_set():
+                       self._match_done(stopped))
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self.after(0,lambda ex=e:self._on_error("Validation Error",ex))
+
+    def _match_done(self,stopped:bool=False):
+        n_match = len(self.results_df)     if self.results_df is not None     else 0
+        n_srz   = len(self._val_srz_only)  if hasattr(self,"_val_srz_only")  else 0
+        n_edc   = len(self._val_edc_only)  if hasattr(self,"_val_edc_only")  else 0
+        self._prog_bar.set(1.0)
+        self._prog_var.set(
+            f"{'Stopped — ' if stopped else 'Complete — '}"
+            f"{n_match:,} matched  ·  {n_srz:,} SRZ gaps  ·  {n_edc:,} EDC-only")
+        self._stop_btn.pack_forget(); self._stop_btn.configure(state="normal",text="⏹  Stop")
+        self._run_btn.pack(side="left",padx=6); self._busy()
+        self._status(
+            f"Validation {'stopped' if stopped else 'complete'}  —  "
+            f"Matched: {n_match:,}  ·  SRZ only (gaps): {n_srz:,}  ·  EDC only: {n_edc:,}")
+        self._populate_results()
+        self._goto(3)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  PAGE 3 — VALIDATION REPORT  (v5)
+    # ══════════════════════════════════════════════════════════════════════════
+    def _build_results(self):
+        pg=tk.Frame(self._content,bg=C["bg"]); self._pages[3]=pg
+
+        top=tk.Frame(pg,bg=C["bg"]); top.pack(fill="x",padx=20,pady=(12,4))
+        _lbl(top,"Validation Report",C["bg"],C["text"],FH).pack(side="left")
+        rb=tk.Frame(top,bg=C["bg"]); rb.pack(side="right")
+        _back(rb,"← Reconfigure",lambda:self._goto(2))
+        _navbtn(rb,"⬇  Export Full Report",self._export_results,C["green"])
+        _navbtn(rb,"⬇  Export Cleaned Source",self._export_cleaned,C["teal"])
+
+        # ── Stat cards row ────────────────────────────────────────────────────
+        self._stat_host=tk.Frame(pg,bg=C["bg"])
+        self._stat_host.pack(fill="x",padx=20,pady=(4,8))
+
+        # ── Tab bar ───────────────────────────────────────────────────────────
+        tab_bar=_card(pg); tab_bar.pack(fill="x",padx=20,pady=(0,0))
+        self._res_tab=tk.StringVar(value="summary")
+        TAB_DEFS=[
+            ("summary", "📊  Summary",                  C["blue"]),
+            ("matched", "✅  Matched",                  C["green"]),
+            ("srz_only","⚠   In SRZ — Missing from EDC", C["amber"]),
+            ("edc_only","ℹ   In EDC — Not in SRZ",       C["purple"]),
+        ]
+        self._tab_btns:Dict[str,tk.Label]={}
+        for val,txt,color in TAB_DEFS:
+            btn=tk.Label(tab_bar,text=txt,bg=C["card"],fg=C["text2"],
+                         font=FsB,padx=16,pady=8,cursor="hand2")
+            btn.pack(side="left")
+            btn.bind("<Button-1>",lambda e,v=val:self._switch_tab(v))
+            self._tab_btns[val]=btn
+
+        # ── Tab content frames ─────────────────────────────────────────────────
+        self._tab_host=tk.Frame(pg,bg=C["bg"])
+        self._tab_host.pack(fill="both",expand=True,padx=20,pady=(0,6))
+        self._tab_frames:Dict[str,tk.Frame]={}
+        for val,*_ in TAB_DEFS:
+            f=tk.Frame(self._tab_host,bg=C["bg"]); self._tab_frames[val]=f
+
+        # ── SUMMARY frame ─────────────────────────────────────────────────────
+        sf=self._tab_frames["summary"]
+        # Coverage section
+        cov_row=tk.Frame(sf,bg=C["bg"]); cov_row.pack(fill="x",pady=(10,6))
+        cov_row.columnconfigure(0,weight=1); cov_row.columnconfigure(1,weight=1)
+
+        # Left: table coverage gauge
+        self._tbl_cov_card=_card(cov_row,padx=20,pady=16)
+        self._tbl_cov_card.grid(row=0,column=0,sticky="nsew",padx=(0,8))
+        _lbl(self._tbl_cov_card,"Table Coverage",C["card"],C["text"],FS).pack(anchor="w")
+        _sep(self._tbl_cov_card)
+        self._tbl_cov_body=tk.Frame(self._tbl_cov_card,bg=C["card"])
+        self._tbl_cov_body.pack(fill="both",expand=True)
+
+        # Right: schema coverage gauge
+        self._sch_cov_card=_card(cov_row,padx=20,pady=16)
+        self._sch_cov_card.grid(row=0,column=1,sticky="nsew",padx=(8,0))
+        _lbl(self._sch_cov_card,"Schema Coverage",C["card"],C["text"],FS).pack(anchor="w")
+        _sep(self._sch_cov_card)
+        self._sch_cov_body=tk.Frame(self._sch_cov_card,bg=C["card"])
+        self._sch_cov_body.pack(fill="both",expand=True)
+
+        # Bottom: schema gap lists
+        sg_row=tk.Frame(sf,bg=C["bg"]); sg_row.pack(fill="both",expand=True)
+        sg_row.columnconfigure(0,weight=1); sg_row.columnconfigure(1,weight=1)
+
+        # SRZ-only schemas
+        sl=_card(sg_row,padx=12,pady=12)
+        sl.grid(row=0,column=0,sticky="nsew",padx=(0,6))
+        tk.Frame(sl,bg=C["amber"],height=4).pack(fill="x")
+        self._sch_srz_lbl=_lbl(sl,"",C["card"],C["amber"],FBB); self._sch_srz_lbl.pack(anchor="w",pady=(6,2))
+        _lbl(sl,"Schemas in SRZ — NOT found in EDC  (data may not have been loaded)",
+             C["card"],C["text3"],Fs,wraplength=420).pack(anchor="w",pady=(0,4))
+        st2=tk.Frame(sl,bg=C["card"]); st2.pack(fill="both",expand=True)
+        self._sch_srz_tree=make_tree(st2,["Schema — In SRZ, Missing from EDC"],[420])
+
+        # EDC-only schemas
+        sr2=_card(sg_row,padx=12,pady=12)
+        sr2.grid(row=0,column=1,sticky="nsew",padx=(6,0))
+        tk.Frame(sr2,bg=C["purple"],height=4).pack(fill="x")
+        self._sch_edc_lbl=_lbl(sr2,"",C["card"],C["purple"],FBB); self._sch_edc_lbl.pack(anchor="w",pady=(6,2))
+        _lbl(sr2,"Schemas in EDC — NOT found in SRZ  (extra records)",
+             C["card"],C["text3"],Fs,wraplength=420).pack(anchor="w",pady=(0,4))
+        st3=tk.Frame(sr2,bg=C["card"]); st3.pack(fill="both",expand=True)
+        self._sch_edc_tree=make_tree(st3,["Schema — In EDC, Not in SRZ"],[420])
+
+        # ── Build the 3 data tabs (matched / srz_only / edc_only) ─────────────
+        self._build_data_tab("matched",  C["green"],  "✅  Matched Pairs",
+                             "Schema+Table pairs present in BOTH files.")
+        self._build_data_tab("srz_only", C["amber"],  "⚠   In SRZ — MISSING from EDC",
+                             "These tables are in your SRZ reference but could NOT be found in the EDC source.\n"
+                             "Action required: verify these were loaded into EDC / Collibra.")
+        self._build_data_tab("edc_only", C["purple"], "ℹ   In EDC — Not in SRZ",
+                             "These tables are in EDC source but have no matching record in SRZ reference.")
+
+    def _build_data_tab(self,key,color,title,subtitle):
+        f=self._tab_frames[key]
+        hdr=tk.Frame(f,bg=color,padx=16,pady=10)
+        hdr.pack(fill="x",pady=(8,0))
+        _lbl(hdr,title,color,C["text_inv"],FBB).pack(anchor="w")
+        _lbl(hdr,subtitle,color,C["text_inv"],("Helvetica",8),
+             justify="left",wraplength=900).pack(anchor="w",pady=(2,0))
+        # Stat row
+        sr=tk.Frame(f,bg=C["bg"]); sr.pack(fill="x",pady=(6,4))
+        setattr(self,f"_dt_{key}_stats",sr)
+        # Search bar
+        sc=_card(f); sc.pack(fill="x",pady=(0,4))
+        _lbl(sc,"Search:",C["card"],C["text2"],Fs).pack(side="left",padx=8,pady=6)
+        sv=tk.StringVar(); setattr(self,f"_dt_{key}_flt",sv)
+        tk.Entry(sc,textvariable=sv,bg=C["stripe"],fg=C["text"],
+                 font=Fs,relief="flat",width=34).pack(side="left",padx=4)
+        sv.trace_add("write",lambda *_,k=key:self._filter_dt(k))
+        cnt=tk.StringVar(value=""); setattr(self,f"_dt_{key}_cnt",cnt)
+        _lbl(sc,None,C["card"],C["text3"],Fs,textvariable=cnt).pack(side="right",padx=10)
+        # Tree
+        th=tk.Frame(f,bg=C["bg"]); th.pack(fill="both",expand=True)
+        tree=make_tree(th,["Schema","Table"],[300,450])
+        setattr(self,f"_dt_{key}_tree",tree)
+        # Sort
+        for col in ("Schema","Table"):
+            tree.heading(col,text=col,anchor="w",
+                         command=lambda c=col,k=key:self._sort_dt(k,c))
+
+    def _switch_tab(self,tab:str):
+        self._res_tab.set(tab)
+        for v,f in self._tab_frames.items(): f.pack_forget()
+        self._tab_frames[tab].pack(fill="both",expand=True)
+        for v,btn in self._tab_btns.items():
+            btn.configure(bg=C["blue_lt"] if v==tab else C["card"],
+                          fg=C["blue_dk"] if v==tab else C["text2"],
+                          font=FBB if v==tab else FsB)
+
+    def _populate_results(self):
+        matched  = self.results_df              if self.results_df is not None else pd.DataFrame()
+        srz_only = getattr(self,"_val_srz_only",pd.DataFrame())
+        edc_only = getattr(self,"_val_edc_only",pd.DataFrame())
+        ref_nm   = getattr(self,"_val_ref_nm","SRZ")
+        src_nm   = getattr(self,"_val_src_nm","EDC")
+        ref_total= getattr(self,"_val_ref_total",0)
+        src_total= getattr(self,"_val_src_total",0)
+        n_m=len(matched); n_srz=len(srz_only); n_edc=len(edc_only)
+        total=n_m+n_srz+n_edc
+        cov=round(n_m/max(ref_total,1)*100,1)
+
+        sch_matched =getattr(self,"_val_sch_matched",[])
+        sch_srz_only=getattr(self,"_val_sch_srz_only",[])
+        sch_edc_only=getattr(self,"_val_sch_edc_only",[])
+
+        # ── Stat cards ─────────────────────────────────────────────────────────
+        for w in self._stat_host.winfo_children(): w.destroy()
+        cards=[
+            (f"{ref_total:,}",    f"Total in {ref_nm}",         C["blue"],  "Unique (schema, table) pairs"),
+            (f"{src_total:,}",    f"Total in {src_nm}",         C["slate"], "Unique (schema, table) pairs"),
+            (f"{n_m:,}",          "✅  Matched",                 C["green"], f"In both files"),
+            (f"{cov}%",           "Coverage",                    C["teal"],  f"% of {ref_nm} found in {src_nm}"),
+            (f"{n_srz:,}",        f"⚠  In {ref_nm}, Not {src_nm}",C["amber"],"Missing from EDC ← action needed"),
+            (f"{n_edc:,}",        f"ℹ  In {src_nm}, Not {ref_nm}",C["purple"],"Extra in EDC"),
+            (f"{len(sch_srz_only)}",f"Schema Gaps",              C["red"],   "Schemas only on one side"),
+        ]
+        for val,lbl,color,tip in cards:
+            c=_card(self._stat_host,padx=11,pady=7)
+            c.pack(side="left",padx=(0,4))
+            _lbl(c,val,C["card"],color,("Georgia",15,"bold")).pack()
+            _lbl(c,lbl,C["card"],C["text"],Fs).pack()
+            _lbl(c,tip,C["card"],C["text3"],("Helvetica",7),wraplength=110).pack()
+
+        # ── Coverage gauges ────────────────────────────────────────────────────
+        def _gauge(host,n_match,n_left,n_right,unit,left_lbl,right_lbl):
+            for w in host.winfo_children(): w.destroy()
+            total_g=n_match+n_left+n_right
+            pct=round(n_match/max(total_g,1)*100,1)
+            color=C["green"] if pct>=95 else C["amber"] if pct>=75 else C["red"]
+            _lbl(host,f"{pct}%",C["card"],color,("Georgia",30,"bold")).pack(pady=(4,0))
+            _lbl(host,f"of {total_g:,} {unit}",C["card"],C["text2"],Fs).pack()
+            # Stacked bar
+            BAR=280
+            bar=tk.Frame(host,bg=C["border"],width=BAR,height=16)
+            bar.pack(pady=(6,0)); bar.pack_propagate(False)
+            for n,c_bar in [(n_match,C["green"]),(n_left,C["amber"]),(n_right,C["purple"])]:
+                w2=int(n/max(total_g,1)*BAR)
+                if w2>0: tk.Frame(bar,bg=c_bar,width=w2,height=16).pack(side="left",fill="y")
+            leg=tk.Frame(host,bg=C["card"]); leg.pack(pady=(4,0))
+            for n,c_bar,lbl2 in [(n_match,C["green"],"Matched"),
+                                   (n_left, C["amber"],left_lbl),
+                                   (n_right,C["purple"],right_lbl)]:
+                r=tk.Frame(leg,bg=C["card"]); r.pack(side="left",padx=6)
+                tk.Frame(r,bg=c_bar,width=10,height=10).pack(side="left",pady=2)
+                _lbl(r,f"  {n:,} {lbl2}",C["card"],C["text"],Fs).pack(side="left")
+
+        _gauge(self._tbl_cov_body, n_m, n_srz, n_edc, "tables",
+               "SRZ only", "EDC only")
+        _gauge(self._sch_cov_body, len(sch_matched), len(sch_srz_only), len(sch_edc_only),
+               "schemas", "SRZ only", "EDC only")
+
+        # ── Schema gap trees ──────────────────────────────────────────────────
+        self._sch_srz_lbl.configure(text=f"{len(sch_srz_only):,} schema(s) in {ref_nm} — not in {src_nm}")
+        self._fill_schema_tree(self._sch_srz_tree, sch_srz_only, "Schema — In SRZ, Missing from EDC")
+        self._sch_edc_lbl.configure(text=f"{len(sch_edc_only):,} schema(s) in {src_nm} — not in {ref_nm}")
+        self._fill_schema_tree(self._sch_edc_tree, sch_edc_only, "Schema — In EDC, Not in SRZ")
+
+        # ── Data tabs ─────────────────────────────────────────────────────────
+        self._load_dt("matched",  matched,  n_m,    C["green"])
+        self._load_dt("srz_only", srz_only, n_srz,  C["amber"])
+        self._load_dt("edc_only", edc_only, n_edc,  C["purple"])
+
+        self._switch_tab("summary")
+
+    def _fill_schema_tree(self,tree,items,heading):
+        tree.delete(*tree.get_children())
+        tree["columns"]=[heading]
+        tree.heading(heading,text=heading,anchor="w")
+        tree.column(heading,width=420,anchor="w")
+        for i,v in enumerate(items):
+            tree.insert("","end",values=(v,),tags=("odd" if i%2 else "even",))
+
+    def _load_dt(self,key:str,df:pd.DataFrame,total:int,color:str):
+        sr=getattr(self,f"_dt_{key}_stats")
+        tree=getattr(self,f"_dt_{key}_tree")
+        cnt_var=getattr(self,f"_dt_{key}_cnt")
+        setattr(self,f"_dt_{key}_full",df)
+
+        for w in sr.winfo_children(): w.destroy()
+        if total==0:
+            _lbl(sr,"  ✅  None — all records match!",C["bg"],C["green"],FBB).pack(side="left",pady=4,padx=4)
+        else:
+            c2=_card(sr,padx=14,pady=6); c2.pack(side="left")
+            _lbl(c2,f"{total:,}",C["card"],color,("Georgia",16,"bold")).pack()
+            _lbl(c2,"records",C["card"],C["text2"],Fs).pack()
+            if df is not None and "Schema" in df.columns:
+                ns=df["Schema"].nunique()
+                c3=_card(sr,padx=14,pady=6); c3.pack(side="left",padx=(5,0))
+                _lbl(c3,f"{ns:,}",C["card"],color,("Georgia",16,"bold")).pack()
+                _lbl(c3,"schemas",C["card"],C["text2"],Fs).pack()
+
+        self._fill_dt_tree(tree,df,cnt_var)
+
+    def _fill_dt_tree(self,tree,df:Optional[pd.DataFrame],cnt_var:tk.StringVar):
+        tree.delete(*tree.get_children())
+        if df is None or df.empty: cnt_var.set("0 records"); return
+        tree["columns"]=["Schema","Table"]
+        tree.heading("Schema",text="Schema",anchor="w"); tree.column("Schema",width=300,anchor="w")
+        tree.heading("Table", text="Table", anchor="w"); tree.column("Table", width=450,anchor="w")
+        cap=10_000
+        for i,(_,row) in enumerate(df.head(cap).iterrows()):
+            tree.insert("","end",values=(row.get("Schema",""),row.get("Table","")),
+                        tags=("odd" if i%2 else "even",))
+        if len(df)>cap:
+            tree.insert("","end",values=[f"  ⋯  {len(df)-cap:,} more — export for full list",""])
+        cnt_var.set(f"{min(len(df),cap):,} of {len(df):,}")
+
+    def _filter_dt(self,key:str):
+        df=getattr(self,f"_dt_{key}_full",None)
+        tree=getattr(self,f"_dt_{key}_tree")
+        cnt_var=getattr(self,f"_dt_{key}_cnt")
+        flt_var=getattr(self,f"_dt_{key}_flt")
+        if df is None or df.empty: return
+        q=flt_var.get().strip().lower()
+        if q:
+            df=df[df.apply(lambda r:any(q in str(v).lower() for v in r),axis=1)]
+        self._fill_dt_tree(tree,df,cnt_var)
+
+    _dt_sort_asc:Dict[str,bool]={}
+    def _sort_dt(self,key:str,col:str):
+        df=getattr(self,f"_dt_{key}_full",None)
+        if df is None or df.empty: return
+        k=f"{key}_{col}"; asc=not self._dt_sort_asc.get(k,False)
+        self._dt_sort_asc[k]=asc
+        df=df.sort_values(col,ascending=asc).reset_index(drop=True)
+        setattr(self,f"_dt_{key}_full",df)
+        self._fill_dt_tree(getattr(self,f"_dt_{key}_tree"),df,getattr(self,f"_dt_{key}_cnt"))
+
+    # ── Export ─────────────────────────────────────────────────────────────────
+    def _export_results(self):
+        matched  = self.results_df if self.results_df is not None else pd.DataFrame()
+        srz_only = getattr(self,"_val_srz_only",pd.DataFrame())
+        edc_only = getattr(self,"_val_edc_only",pd.DataFrame())
+        if matched.empty and srz_only.empty and edc_only.empty:
+            messagebox.showinfo("Export","No results yet."); return
+        path=filedialog.asksaveasfilename(defaultextension=".xlsx",
+            filetypes=[("Excel Workbook","*.xlsx"),("CSV","*.csv")],
+            title="Export Validation Report")
+        if not path: return
+        try:
+            ref_nm=getattr(self,"_val_ref_nm","SRZ")
+            src_nm=getattr(self,"_val_src_nm","EDC")
+            ref_total=getattr(self,"_val_ref_total",0)
+            src_total=getattr(self,"_val_src_total",0)
+            n_m=len(matched); n_srz=len(srz_only); n_edc=len(edc_only)
+            cov=round(n_m/max(ref_total,1)*100,1)
+            sch_srz=getattr(self,"_val_sch_srz_only",[])
+            sch_edc=getattr(self,"_val_sch_edc_only",[])
+            sch_mat=getattr(self,"_val_sch_matched",[])
+
+            if path.endswith(".csv"):
+                # Export gaps as CSV
+                pd.concat([
+                    srz_only.assign(**{"Gap Type":f"In {ref_nm} — Missing from {src_nm}"}),
+                    edc_only.assign(**{"Gap Type":f"In {src_nm} — Not in {ref_nm}"}),
+                ],ignore_index=True).to_csv(path,index=False,encoding="utf-8-sig")
+            else:
+                with pd.ExcelWriter(path,engine="openpyxl") as w:
+                    # Sheet 1: Executive Summary
+                    summ=pd.DataFrame([
+                        {"Metric":"Source File (EDC)",    "Value":str(self.src_path)},
+                        {"Metric":"Reference File (SRZ)", "Value":str(self.ref_path)},
+                        {"Metric":"","Value":""},
+                        {"Metric":f"Total in {ref_nm} (authoritative)",  "Value":ref_total},
+                        {"Metric":f"Total in {src_nm} (loaded)",         "Value":src_total},
+                        {"Metric":"Matched (in both)",    "Value":n_m},
+                        {"Metric":f"Coverage %",          "Value":f"{cov}%"},
+                        {"Metric":"","Value":""},
+                        {"Metric":f"⚠  In {ref_nm} — MISSING from {src_nm}  ← GAPS","Value":n_srz},
+                        {"Metric":f"ℹ  In {src_nm} — Not in {ref_nm}","Value":n_edc},
+                        {"Metric":"","Value":""},
+                        {"Metric":"Schemas matched",      "Value":len(sch_mat)},
+                        {"Metric":f"Schemas in {ref_nm} only (gaps)","Value":len(sch_srz)},
+                        {"Metric":f"Schemas in {src_nm} only",        "Value":len(sch_edc)},
+                    ])
+                    summ.to_excel(w,sheet_name="Executive Summary",index=False)
+
+                    # Sheet 2: The critical gaps — SRZ not in EDC
+                    if not srz_only.empty:
+                        out=srz_only.copy()
+                        out.insert(0,"Gap Type",f"In {ref_nm} — MISSING from {src_nm}")
+                        out.to_excel(w,sheet_name=f"GAPS — {ref_nm} Missing in EDC",index=False)
+
+                    # Sheet 3: EDC extras
+                    if not edc_only.empty:
+                        out2=edc_only.copy()
+                        out2.insert(0,"Gap Type",f"In {src_nm} — Not in {ref_nm}")
+                        out2.to_excel(w,sheet_name=f"EDC Only — Not in {ref_nm}",index=False)
+
+                    # Sheet 4: All gaps combined
+                    all_gaps=pd.concat([
+                        srz_only.assign(**{"Gap Type":f"In {ref_nm} — Missing from {src_nm}"}),
+                        edc_only.assign(**{"Gap Type":f"In {src_nm} — Not in {ref_nm}"}),
+                    ],ignore_index=True) if (not srz_only.empty or not edc_only.empty) else pd.DataFrame()
+                    if not all_gaps.empty:
+                        all_gaps.to_excel(w,sheet_name="All Gaps Combined",index=False)
+
+                    # Sheet 5: Matched
+                    if not matched.empty:
+                        matched.to_excel(w,sheet_name="Matched Pairs",index=False)
+
+                    # Sheet 6: Schema analysis
+                    sch_df=pd.DataFrame([
+                        *[{"Schema":s,"Status":f"Matched (both)"} for s in sch_mat],
+                        *[{"Schema":s,"Status":f"In {ref_nm} only — MISSING from {src_nm}"} for s in sch_srz],
+                        *[{"Schema":s,"Status":f"In {src_nm} only — Not in {ref_nm}"} for s in sch_edc],
+                    ])
+                    if not sch_df.empty:
+                        sch_df.sort_values("Schema").to_excel(w,sheet_name="Schema Analysis",index=False)
+
+                    # Sheet 7+: Cleaned files
+                    if self.src_df is not None:
+                        self.src_df.to_excel(w,sheet_name="Cleaned EDC Source",index=False)
+                    if self.ref_df is not None:
+                        self.ref_df.to_excel(w,sheet_name="SRZ Reference",index=False)
+
+            self._status(f"Exported → {Path(path).name}")
+            messagebox.showinfo("Export Complete",
+                f"Validation report saved:\n{path}\n\n"
+                f"Key figures:\n"
+                f"  ✅  Matched:     {n_m:,}\n"
+                f"  ⚠   SRZ gaps:   {n_srz:,}  ← tables to investigate\n"
+                f"  ℹ   EDC extras: {n_edc:,}\n"
+                f"  📊  Coverage:   {cov}%")
+        except Exception as e:
+            messagebox.showerror("Export Error",str(e))
+
+    def _export_cleaned(self):
+        if self.src_df is None:
+            messagebox.showinfo("Export","No cleaned source."); return
+        path=filedialog.asksaveasfilename(defaultextension=".xlsx",
+            filetypes=[("Excel Workbook","*.xlsx"),("CSV","*.csv")],
+            title="Export Cleaned Source")
+        if not path: return
+        try:
+            if path.endswith(".csv"): self.src_df.to_csv(path,index=False,encoding="utf-8-sig")
+            else: self.src_df.to_excel(path,index=False)
+            messagebox.showinfo("Exported",f"Saved:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Error",str(e))
+
+    def _on_error(self,title:str,exc:Exception):
+        self._busy(); self._status(f"Error: {exc}")
+        self._stop_btn.pack_forget()
+        self._stop_btn.configure(state="normal",text="⏹  Stop")
+        self._run_btn.pack(side="left",padx=6)
+        try: self._parse_btn.configure(state="normal",text="Parse & Clean  →",bg=C["blue"])
+        except: pass
+        messagebox.showerror(title,str(exc))
 
         # Outer scroll host so the page doesn't clip on small screens
         outer=tk.Frame(pg,bg=C["bg"]); outer.pack(fill="both",expand=True,padx=20,pady=(0,8))
