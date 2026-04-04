@@ -1158,7 +1158,7 @@ class App(ctk.CTk):
             tk.Radiobutton(ctrl,text=txt,variable=self._prev_tab,value=val,
                            bg=C["card"],fg=C["text"],selectcolor=C["blue_lt"],
                            font=FB,activebackground=C["card"],
-                           command=self._switch_tab).pack(side="left",padx=14,pady=7)
+                           command=self._switch_prev_tab).pack(side="left",padx=14,pady=7)
 
         # Search entry
         tk.Frame(ctrl,bg=C["border"],width=1).pack(side="left",fill="y",pady=4)
@@ -1177,9 +1177,9 @@ class App(ctk.CTk):
         th=tk.Frame(pg,bg=C["bg"]); th.pack(fill="both",expand=True,padx=20,pady=(4,6))
         self._prev_tree=make_tree(th,["Loading…"])
 
-    def _populate_preview(self): self._switch_tab()
+    def _populate_preview(self): self._switch_prev_tab()
 
-    def _switch_tab(self,*_):
+    def _switch_prev_tab(self,*_):
         tab=self._prev_tab.get()
         df=self.src_df if tab=="source" else self.ref_df
         if df is None: return
