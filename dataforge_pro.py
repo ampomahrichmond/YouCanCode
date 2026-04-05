@@ -1331,7 +1331,6 @@ class App(ctk.CTk):
         ar=tk.Frame(map_card,bg=C["card"]); ar.pack(fill="x",pady=5)
         _lbl(ar,"Asset column\n(optional carry-through):",C["card"],C["slate"],FBB,
              width=20,anchor="w",justify="left").pack(side="left")
-        self._ref_asset_var=tk.StringVar(value="(none)")
         self._ref_asset_cb=ttk.Combobox(ar,textvariable=self._ref_asset_var,
                                           state="readonly",font=Fs,width=30)
         self._ref_asset_cb.pack(side="left",padx=(0,6))
