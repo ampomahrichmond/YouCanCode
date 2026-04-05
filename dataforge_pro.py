@@ -1756,9 +1756,8 @@ class App(ctk.CTk):
         self._sch_srz_lbl.pack(anchor="w", pady=(6,2))
         _lbl(sl,"Schemas in SRZ — NOT found in EDC",
              C["card"],C["text3"],Fs,wraplength=420).pack(anchor="w",pady=(0,4))
-        self._sch_srz_tree = make_tree(tk.Frame(sl,bg=C["card"]).apply(
-            lambda w: w.pack(fill="both",expand=True) or w),
-            ["Schema — In SRZ, Not in EDC"],[420])
+        _srz_th = tk.Frame(sl, bg=C["card"]); _srz_th.pack(fill="both", expand=True)
+        self._sch_srz_tree = make_tree(_srz_th, ["Schema — In SRZ, Not in EDC"], [420])
 
         sr2 = _card(sg_row, padx=12, pady=12)
         sr2.grid(row=0, column=1, sticky="nsew", padx=(6,0))
@@ -1767,9 +1766,8 @@ class App(ctk.CTk):
         self._sch_edc_lbl.pack(anchor="w", pady=(6,2))
         _lbl(sr2,"Schemas in EDC — NOT found in SRZ",
              C["card"],C["text3"],Fs,wraplength=420).pack(anchor="w",pady=(0,4))
-        self._sch_edc_tree = make_tree(tk.Frame(sr2,bg=C["card"]).apply(
-            lambda w: w.pack(fill="both",expand=True) or w),
-            ["Schema — In EDC, Not in SRZ"],[420])
+        _edc_th = tk.Frame(sr2, bg=C["card"]); _edc_th.pack(fill="both", expand=True)
+        self._sch_edc_tree = make_tree(_edc_th, ["Schema — In EDC, Not in SRZ"], [420])
 
         # ── Data tabs ─────────────────────────────────────────────────────────
         self._build_data_tab("matched",  C["green"],
