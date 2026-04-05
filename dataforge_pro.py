@@ -980,6 +980,7 @@ class App(ctk.CTk):
         self._hier_col_var  = tk.StringVar()
         self._ref_schema_var= tk.StringVar()
         self._ref_table_var = tk.StringVar()
+        self._ref_asset_var = tk.StringVar(value="(none)")
         self._src_schema_var= tk.StringVar()
         self._src_table_var = tk.StringVar()
         self._use_pipe      = tk.BooleanVar(value=True)
@@ -1326,6 +1327,17 @@ class App(ctk.CTk):
                                          state="readonly",font=Fs,width=30)
         self._src_table_cb.pack(side="left",padx=(6,0))
 
+        # Asset / carry-through column row (SRZ side only)
+        ar=tk.Frame(map_card,bg=C["card"]); ar.pack(fill="x",pady=5)
+        _lbl(ar,"Asset column\n(optional carry-through):",C["card"],C["slate"],FBB,
+             width=20,anchor="w",justify="left").pack(side="left")
+        self._ref_asset_var=tk.StringVar(value="(none)")
+        self._ref_asset_cb=ttk.Combobox(ar,textvariable=self._ref_asset_var,
+                                          state="readonly",font=Fs,width=30)
+        self._ref_asset_cb.pack(side="left",padx=(0,6))
+        _lbl(ar,"  ←  included in results for side-by-side comparison",
+             C["card"],C["text3"],Fs).pack(side="left",padx=(6,0))
+
         _lbl(map_card,
              "Tip: for SRZ 'Name' column (col A) → select it as the Table column. "
              "For SRZ 'Asset' column (col D) → use as Schema. "
@@ -1408,6 +1420,14 @@ class App(ctk.CTk):
         if not self._src_table_var.get() or self._src_table_var.get() not in src_cols:
             self._src_table_var.set(src_table_dflt)
 
+        # SRZ Asset / carry-through column (optional)
+        self._ref_asset_cb["values"]=["(none)"]+ref_cols
+        asset_dflt=_best(ref_cols,
+            [r"^asset$",r"asset.?type",r"type",r"domain",r"community"],
+            "(none)")
+        if not self._ref_asset_var.get() or self._ref_asset_var.get() not in (["(none)"]+ref_cols):
+            self._ref_asset_var.set(asset_dflt if asset_dflt in ref_cols else "(none)")
+
     # ── Run / Stop ────────────────────────────────────────────────────────────
     def _do_match(self):
         ref_schema=self._ref_schema_var.get()
@@ -1452,36 +1472,70 @@ class App(ctk.CTk):
             src_nm=Path(self.src_path).stem if self.src_path else "EDC"
             ref_nm=Path(self.ref_path).stem if self.ref_path else "SRZ"
 
+            # Read the Asset column selection
+            ref_asset_col=self._ref_asset_var.get()
+            if ref_asset_col=="(none)" or ref_asset_col not in self.ref_df.columns:
+                ref_asset_col=None
+
             pv("Normalising SRZ reference…"); pr(0.10)
             st("Normalising SRZ reference data…")
 
             def norm(s):
-                return (pd.Series(s).astype(str)
-                        .str.lower().str.strip()
-                        .str.replace(r"\s+"," ",regex=True))
+                """
+                Aggressive normalisation:
+                  1. Cast to str
+                  2. Strip ALL unicode whitespace (incl. non-breaking spaces, tabs)
+                     from both ends AND collapse internal runs to a single space
+                  3. Lowercase
+                This prevents ' AAP' and 'AAP' from being treated as different.
+                """
+                return (pd.Series(s)
+                        .astype(str)
+                        # Replace ALL whitespace variants (including \u00a0 etc.) with space
+                        .str.replace(r"[\s\u00a0\u200b\ufeff]+", " ", regex=True)
+                        .str.strip()
+                        .str.lower())
 
-            # ── Build normalised (schema, table) sets ─────────────────────────
-            # SRZ side (reference — the authoritative list)
-            ref_s=norm(self.ref_df[ref_schema])
-            ref_t=norm(self.ref_df[ref_table])
-            ref_pairs=pd.DataFrame({"schema":ref_s,"table":ref_t})
-            ref_pairs=ref_pairs[
-                ref_pairs["schema"].notna()&(~ref_pairs["schema"].isin(["","nan","none"]))&
-                ref_pairs["table"].notna() &(~ref_pairs["table"].isin(["","nan","none"]))
-            ].drop_duplicates().reset_index(drop=True)
+            # ── Build normalised (schema, table) sets — also carry raw values ──
+            # SRZ side — build a working frame with original + normalised columns
+            ref_df_w = self.ref_df.copy().reset_index(drop=True)
+            ref_df_w["__schema_norm__"] = norm(ref_df_w[ref_schema])
+            ref_df_w["__table_norm__"]  = norm(ref_df_w[ref_table])
+            if ref_asset_col:
+                ref_df_w["__asset_raw__"] = ref_df_w[ref_asset_col].astype(str).str.strip()
+            else:
+                ref_df_w["__asset_raw__"] = ""
+
+            ref_pairs = ref_df_w[
+                ref_df_w["__schema_norm__"].notna() &
+                (~ref_df_w["__schema_norm__"].isin(["","nan","none"])) &
+                ref_df_w["__table_norm__"].notna()  &
+                (~ref_df_w["__table_norm__"].isin(["","nan","none"]))
+            ][["__schema_norm__","__table_norm__","__asset_raw__"]].copy()
+            ref_pairs.columns = ["schema","table","srz_asset"]
+            # Keep first asset value per (schema, table) pair
+            ref_pairs = (ref_pairs
+                         .sort_values("srz_asset")
+                         .drop_duplicates(subset=["schema","table"])
+                         .reset_index(drop=True))
 
             pv("Normalising EDC source…"); pr(0.25)
             pd2(f"SRZ: {len(ref_pairs):,} unique (schema, table) pairs")
             st("Normalising EDC source data…")
 
-            # EDC side (source — what was loaded)
-            src_s=norm(self.src_df[src_schema])
-            src_t=norm(self.src_df[src_table])
-            src_pairs=pd.DataFrame({"schema":src_s,"table":src_t})
-            src_pairs=src_pairs[
-                src_pairs["schema"].notna()&(~src_pairs["schema"].isin(["","nan","none"]))&
-                src_pairs["table"].notna() &(~src_pairs["table"].isin(["","nan","none"]))
-            ].drop_duplicates().reset_index(drop=True)
+            # EDC side
+            src_df_w = self.src_df.copy().reset_index(drop=True)
+            src_df_w["__schema_norm__"] = norm(src_df_w[src_schema])
+            src_df_w["__table_norm__"]  = norm(src_df_w[src_table])
+
+            src_pairs = src_df_w[
+                src_df_w["__schema_norm__"].notna() &
+                (~src_df_w["__schema_norm__"].isin(["","nan","none"])) &
+                src_df_w["__table_norm__"].notna()  &
+                (~src_df_w["__table_norm__"].isin(["","nan","none"]))
+            ][["__schema_norm__","__table_norm__"]].copy()
+            src_pairs.columns = ["schema","table"]
+            src_pairs = src_pairs.drop_duplicates().reset_index(drop=True)
 
             pv("Running set comparison…"); pr(0.50)
             pd2(f"SRZ: {len(ref_pairs):,}  ·  EDC: {len(src_pairs):,} unique pairs")
@@ -1490,106 +1544,116 @@ class App(ctk.CTk):
             if self._stop_event.is_set():
                 self.after(0,lambda:self._match_done(True)); return
 
-            # ── Full outer join — the core set comparison ─────────────────────
-            ref_pairs["__in_ref__"]=True
-            src_pairs["__in_src__"]=True
+            # ── Full outer join ────────────────────────────────────────────────
+            ref_pairs["__in_ref__"] = True
+            src_pairs["__in_src__"] = True
 
-            merged=ref_pairs.merge(src_pairs,on=["schema","table"],how="outer")
-            in_ref=merged["__in_ref__"].fillna(False).astype(bool)
-            in_src=merged["__in_src__"].fillna(False).astype(bool)
+            merged = ref_pairs.merge(src_pairs, on=["schema","table"], how="outer")
+            in_ref = merged["__in_ref__"].fillna(False).astype(bool)
+            in_src = merged["__in_src__"].fillna(False).astype(bool)
 
             pv("Building result tables…"); pr(0.80)
 
-            def _clean(df):
-                out=df[["schema","table"]].copy().fillna("")
-                out.columns=["Schema","Table"]
-                return out.sort_values(["Schema","Table"]).reset_index(drop=True)
+            def _clean_ref(mask):
+                """Extract rows with SRZ asset column included."""
+                sub = merged[mask][["schema","table"]].fillna("").copy()
+                # Re-join to get asset value (only present on ref side)
+                sub = sub.merge(
+                    ref_pairs[["schema","table","srz_asset"]],
+                    on=["schema","table"], how="left")
+                sub["srz_asset"] = sub["srz_asset"].fillna("")
+                sub.columns = ["Schema","Table","SRZ Asset"]
+                return sub.sort_values(["Schema","Table"]).reset_index(drop=True)
 
-            matched_df  = _clean(merged[ in_ref &  in_src])
-            srz_only_df = _clean(merged[ in_ref & ~in_src])
-            edc_only_df = _clean(merged[~in_ref &  in_src])
+            def _clean_src(mask):
+                sub = merged[mask][["schema","table"]].fillna("").copy()
+                sub.columns = ["Schema","Table"]
+                sub["SRZ Asset"] = ""   # EDC-only rows have no SRZ asset
+                return sub.sort_values(["Schema","Table"]).reset_index(drop=True)
 
-            # ── Near-miss analysis ────────────────────────────────────────────
-            # For SRZ-only items, find if there is a close-but-not-exact EDC value
-            # This catches cases like SRZ "101209" vs EDC "euc101209"
+            matched_df  = _clean_ref(in_ref &  in_src)
+            srz_only_df = _clean_ref(in_ref & ~in_src)
+            edc_only_df = _clean_src(~in_ref &  in_src)
+
+            # ── Near-miss analysis ─────────────────────────────────────────────
+            # For SRZ-only items, find if a SIMILAR (but not identical) EDC schema
+            # exists. CRITICAL FIX: only report as near-miss when the schemas are
+            # genuinely different after normalisation — never when they are equal.
             pv("Finding near-misses…"); pr(0.85)
 
             src_schema_set = set(src_pairs["schema"].unique())
-            src_table_set  = set(src_pairs["schema"].str.cat(src_pairs["table"], sep="\t").unique())
 
             def _find_near_miss_schema(srz_sch: str) -> str:
-                """Return closest EDC schema, or '' if no near-miss found."""
+                """
+                Return the closest EDC schema only when srz_sch is NOT already
+                an exact match. Handles trailing/leading spaces by the time
+                values arrive here they are fully normalised, but we add an
+                explicit equality guard as a safety net.
+                """
                 if not srz_sch: return ""
+                # Safety: if exact match exists, return '' (not a near-miss)
+                if srz_sch in src_schema_set: return ""
+                # Substring containment: "101209" inside "euc101209"
                 for edc_sch in src_schema_set:
                     if srz_sch in edc_sch or edc_sch in srz_sch:
                         return edc_sch
-                # Try suffix match (e.g. "101209" matches end of "euc101209")
+                # Suffix match as fallback
                 for edc_sch in src_schema_set:
                     if edc_sch.endswith(srz_sch) or srz_sch.endswith(edc_sch):
                         return edc_sch
                 return ""
 
-            # Build near-miss map: srz_schema → best edc_schema
-            srz_schemas_to_check = srz_only_df["Schema"].unique()
             near_miss_schema_map: Dict[str,str] = {}
-            for ss in srz_schemas_to_check:
+            for ss in srz_only_df["Schema"].unique():
                 nm = _find_near_miss_schema(ss)
                 if nm:
                     near_miss_schema_map[ss] = nm
 
             # Enrich srz_only with near-miss columns
             srz_only_df = srz_only_df.copy()
-            srz_only_df["SRZ Schema (raw)"]  = srz_only_df["Schema"]
-            srz_only_df["SRZ Table (raw)"]   = srz_only_df["Table"]
             srz_only_df["Closest EDC Schema"] = srz_only_df["Schema"].map(
-                lambda s: near_miss_schema_map.get(s,""))
+                lambda s: near_miss_schema_map.get(s, ""))
             srz_only_df["Near-Miss Note"] = srz_only_df.apply(
-                lambda r: (f"⚡ SRZ '{r['SRZ Schema (raw)']}' ≈ EDC '{r['Closest EDC Schema']}'"
-                           f" — suffix/substring match, not exact")
-                           if r["Closest EDC Schema"] else
-                           "✗ No similar schema found in EDC",
+                lambda r: (
+                    f"⚡ SRZ '{r['Schema']}' ≈ EDC '{r['Closest EDC Schema']}'"
+                    f" — substring/suffix match, verify if same schema")
+                    if r["Closest EDC Schema"] else
+                    "✗ Not found in EDC — confirm this should be loaded",
                 axis=1)
 
-            # Also enrich matched_df with the original raw column values for reference
-            # (so we can show EDC value vs SRZ value side by side even when matched)
-            matched_df = matched_df.copy()
-            matched_df["SRZ Schema"]   = matched_df["Schema"]
-            matched_df["SRZ Table"]    = matched_df["Table"]
-            matched_df["EDC Schema"]   = matched_df["Schema"]   # exact match → same
-            matched_df["EDC Table"]    = matched_df["Table"]
-
-            # ── Schema-level summary ──────────────────────────────────────────
-            ref_schemas=set(ref_pairs["schema"].unique())
-            src_schemas=set(src_pairs["schema"].unique())
-            sch_matched =sorted(ref_schemas & src_schemas)
-            sch_srz_only=sorted(ref_schemas - src_schemas)
-            sch_edc_only=sorted(src_schemas - ref_schemas)
+            # ── Schema-level summary ───────────────────────────────────────────
+            ref_schemas = set(ref_pairs["schema"].unique())
+            src_schemas = set(src_pairs["schema"].unique())
+            sch_matched  = sorted(ref_schemas & src_schemas)
+            sch_srz_only = sorted(ref_schemas - src_schemas)
+            sch_edc_only = sorted(src_schemas - ref_schemas)
 
             pv("Running gap analysis…"); pr(0.95)
-            self.gap_result=compute_gaps(
+            self.gap_result = compute_gaps(
                 self.src_df, self.ref_df,
                 src_join_col=src_schema, ref_join_col=ref_schema,
                 src_table_col=src_table, ref_table_col=ref_table,
                 src_label=src_nm, ref_label=ref_nm)
 
-            # ── Package results ───────────────────────────────────────────────
-            self.results_df=matched_df      # the matched pairs
-            self._val_srz_only=srz_only_df  # SRZ records missing from EDC  ← GAPS
-            self._val_edc_only=edc_only_df  # EDC records not in SRZ
-            self._val_sch_matched =sch_matched
-            self._val_sch_srz_only=sch_srz_only
-            self._val_sch_edc_only=sch_edc_only
-            self._val_ref_nm=ref_nm
-            self._val_src_nm=src_nm
-            self._val_ref_total=len(ref_pairs)
-            self._val_src_total=len(src_pairs)
+            # ── Package results ────────────────────────────────────────────────
+            self.results_df       = matched_df
+            self._val_srz_only    = srz_only_df
+            self._val_edc_only    = edc_only_df
+            self._val_sch_matched  = sch_matched
+            self._val_sch_srz_only = sch_srz_only
+            self._val_sch_edc_only = sch_edc_only
+            self._val_ref_nm      = ref_nm
+            self._val_src_nm      = src_nm
+            self._val_ref_total   = len(ref_pairs)
+            self._val_src_total   = len(src_pairs)
+            self._val_asset_col   = ref_asset_col  # remember which col was used
 
             pr(1.0)
-            self.after(0,lambda stopped=self._stop_event.is_set():
+            self.after(0, lambda stopped=self._stop_event.is_set():
                        self._match_done(stopped))
         except Exception as e:
             import traceback; traceback.print_exc()
-            self.after(0,lambda ex=e:self._on_error("Validation Error",ex))
+            self.after(0, lambda ex=e: self._on_error("Validation Error", ex))
 
     def _match_done(self,stopped:bool=False):
         n_match = len(self.results_df)     if self.results_df is not None     else 0
@@ -1711,10 +1775,8 @@ class App(ctk.CTk):
         _lbl(hdr,title,color,C["text_inv"],FBB).pack(anchor="w")
         _lbl(hdr,subtitle,color,C["text_inv"],("Helvetica",8),
              justify="left",wraplength=900).pack(anchor="w",pady=(2,0))
-        # Stat row
         sr=tk.Frame(f,bg=C["bg"]); sr.pack(fill="x",pady=(6,4))
         setattr(self,f"_dt_{key}_stats",sr)
-        # Search bar
         sc=_card(f); sc.pack(fill="x",pady=(0,4))
         _lbl(sc,"Search:",C["card"],C["text2"],Fs).pack(side="left",padx=8,pady=6)
         sv=tk.StringVar(); setattr(self,f"_dt_{key}_flt",sv)
@@ -1723,24 +1785,16 @@ class App(ctk.CTk):
         sv.trace_add("write",lambda *_,k=key:self._filter_dt(k))
         cnt=tk.StringVar(value=""); setattr(self,f"_dt_{key}_cnt",cnt)
         _lbl(sc,None,C["card"],C["text3"],Fs,textvariable=cnt).pack(side="right",padx=10)
-        # Tree — column layout depends on tab type
         th=tk.Frame(f,bg=C["bg"]); th.pack(fill="both",expand=True)
+        # Column layout: all tabs now include SRZ Asset; srz_only adds near-miss cols
         if key=="srz_only":
-            # Show SRZ columns + nearest EDC match side by side
-            cols=["SRZ Schema (raw)","SRZ Table (raw)","Closest EDC Schema","Near-Miss Note"]
-            widths=[200,300,200,340]
-            tree=make_tree(th,cols,widths)
-        elif key=="matched":
-            # Show SRZ vs EDC side by side (both identical for exact matches)
-            cols=["Schema","Table"]
-            widths=[300,450]
-            tree=make_tree(th,cols,widths)
+            cols=["Schema","Table","SRZ Asset","Closest EDC Schema","Near-Miss Note"]
+            widths=[180,260,120,180,310]
         else:
-            cols=["Schema","Table"]
-            widths=[300,450]
-            tree=make_tree(th,cols,widths)
+            cols=["Schema","Table","SRZ Asset"]
+            widths=[280,380,180]
+        tree=make_tree(th,cols,widths)
         setattr(self,f"_dt_{key}_tree",tree)
-        # Sort
         for col in cols[:2]:
             tree.heading(col,text=col,anchor="w",
                          command=lambda c=col,k=key:self._sort_dt(k,c))
@@ -1869,35 +1923,39 @@ class App(ctk.CTk):
         tree.delete(*tree.get_children())
         if df is None or df.empty: cnt_var.set("0 records"); return
 
-        # Determine which columns to display based on what's in the DataFrame
-        if "SRZ Schema (raw)" in df.columns:
-            # SRZ-only tab — show near-miss side by side
-            display_cols = ["SRZ Schema (raw)","SRZ Table (raw)",
-                            "Closest EDC Schema","Near-Miss Note"]
-            col_widths   = {"SRZ Schema (raw)":200,"SRZ Table (raw)":280,
-                            "Closest EDC Schema":200,"Near-Miss Note":340}
+        # Determine display columns from what's in the DataFrame
+        if "Closest EDC Schema" in df.columns:
+            # srz_only tab
+            display_cols = ["Schema","Table","SRZ Asset","Closest EDC Schema","Near-Miss Note"]
+            col_widths   = {"Schema":180,"Table":260,"SRZ Asset":120,
+                            "Closest EDC Schema":180,"Near-Miss Note":310}
         else:
-            display_cols = ["Schema","Table"]
-            col_widths   = {"Schema":300,"Table":450}
+            # matched / edc_only tabs
+            display_cols = ["Schema","Table","SRZ Asset"]
+            col_widths   = {"Schema":280,"Table":380,"SRZ Asset":180}
+
+        # Only show columns that exist in the dataframe
+        display_cols = [c for c in display_cols if c in df.columns]
 
         tree["columns"] = display_cols
         for c in display_cols:
             tree.heading(c, text=c, anchor="w")
-            tree.column(c, width=col_widths.get(c,200), minwidth=60, anchor="w")
+            tree.column(c, width=col_widths.get(c,150), minwidth=60, anchor="w")
 
         cap = 10_000
         for i, (_, row) in enumerate(df.head(cap).iterrows()):
             vals = [str(row.get(c,"")) for c in display_cols]
-            # Colour-code near-miss rows: amber if near-miss found, red if not
-            if "SRZ Schema (raw)" in df.columns:
+            # Colour: near-miss rows amber, no-match red, others alternating
+            if "Near-Miss Note" in display_cols:
                 has_nm = bool(row.get("Closest EDC Schema",""))
                 tag = "Token Overlap" if has_nm else "Fuzzy"
             else:
                 tag = "odd" if i%2 else "even"
-            tree.insert("","end",values=vals,tags=(tag,))
+            tree.insert("","end", values=vals, tags=(tag,))
 
-        if len(df)>cap:
-            tree.insert("","end",values=[f"  ⋯  {len(df)-cap:,} more — export for full list"]
+        if len(df) > cap:
+            tree.insert("","end",
+                        values=[f"  ⋯  {len(df)-cap:,} more — export for full list"]
                         + [""]*(len(display_cols)-1))
         cnt_var.set(f"{min(len(df),cap):,} of {len(df):,}")
 
@@ -1974,14 +2032,11 @@ class App(ctk.CTk):
                     # Sheet 2: The critical gaps — SRZ not in EDC (with near-miss info)
                     if not srz_only.empty:
                         out = srz_only.copy()
-                        # Reorder columns for clarity
-                        near_cols = [c for c in ["SRZ Schema (raw)","SRZ Table (raw)",
-                                                  "Closest EDC Schema","Near-Miss Note"]
-                                     if c in out.columns]
-                        base_cols = [c for c in ["Schema","Table"] if c in out.columns]
-                        ordered   = near_cols if near_cols else base_cols
-                        other     = [c for c in out.columns if c not in ordered]
-                        out       = out[ordered + other]
+                        # Reorder: put near-miss cols last for readability
+                        base  = [c for c in ["Schema","Table","SRZ Asset"] if c in out.columns]
+                        extra = [c for c in ["Closest EDC Schema","Near-Miss Note"] if c in out.columns]
+                        other = [c for c in out.columns if c not in base+extra]
+                        out   = out[base + extra + other]
                         out.insert(0,"Gap Type",f"In {ref_nm} — MISSING from {src_nm}")
                         out.to_excel(w,sheet_name=f"GAPS — {ref_nm} Missing in EDC",index=False)
 
@@ -1993,9 +2048,12 @@ class App(ctk.CTk):
 
                     # Sheet 3b: Near-miss summary (SRZ schemas with similar EDC counterpart)
                     if not srz_only.empty and "Closest EDC Schema" in srz_only.columns:
-                        nm_df = srz_only[srz_only["Closest EDC Schema"]!=""][
-                            ["SRZ Schema (raw)","SRZ Table (raw)","Closest EDC Schema","Near-Miss Note"]
-                        ].drop_duplicates().sort_values(["SRZ Schema (raw)","SRZ Table (raw)"])
+                        nm_cols = [c for c in ["Schema","Table","SRZ Asset",
+                                               "Closest EDC Schema","Near-Miss Note"]
+                                   if c in srz_only.columns]
+                        nm_df = (srz_only[srz_only["Closest EDC Schema"]!=""][nm_cols]
+                                 .drop_duplicates()
+                                 .sort_values(["Schema","Table"]))
                         if not nm_df.empty:
                             nm_df.to_excel(w,sheet_name="Near-Miss (Similar but ≠)",index=False)
 
