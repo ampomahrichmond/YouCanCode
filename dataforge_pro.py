@@ -1420,11 +1420,15 @@ class App(ctk.CTk):
             self._src_table_var.set(src_table_dflt)
 
         # SRZ Asset / carry-through column (optional)
-        self._ref_asset_cb["values"]=["(none)"]+ref_cols
-        asset_dflt=_best(ref_cols,
-            [r"^asset$",r"asset.?type",r"type",r"domain",r"community"],
+        self._ref_asset_cb["values"] = ["(none)"] + ref_cols
+        asset_dflt = _best(ref_cols,
+            [r"^asset$", r"asset.?type", r"^type$", r"domain", r"community"],
             "(none)")
-        if not self._ref_asset_var.get() or self._ref_asset_var.get() not in (["(none)"]+ref_cols):
+        # Always update if:
+        #  - current value is the placeholder "(none)" and we found a real column
+        #  - current value is no longer in the column list (e.g. after re-parse)
+        cur_asset = self._ref_asset_var.get()
+        if cur_asset == "(none)" or cur_asset not in (["(none)"] + ref_cols):
             self._ref_asset_var.set(asset_dflt if asset_dflt in ref_cols else "(none)")
 
     # ── Run / Stop ────────────────────────────────────────────────────────────
@@ -1479,7 +1483,15 @@ class App(ctk.CTk):
             # Read Asset column selection (optional)
             ref_asset_col = self._ref_asset_var.get()
             if ref_asset_col == "(none)" or ref_asset_col not in self.ref_df.columns:
-                ref_asset_col = None
+                # Auto-detect fallback in case dropdown wasn't set
+                for candidate in ["Asset","asset","ASSET","Asset Type","asset_type"]:
+                    if candidate in self.ref_df.columns:
+                        ref_asset_col = candidate
+                        break
+                else:
+                    ref_asset_col = None
+
+            st(f"Asset column: {'«' + ref_asset_col + '»' if ref_asset_col else 'none selected'}")
 
             # ── Normalisation ─────────────────────────────────────────────────
             # Collapse ALL unicode whitespace variants (incl non-breaking spaces)
