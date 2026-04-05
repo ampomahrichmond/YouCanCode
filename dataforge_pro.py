@@ -158,41 +158,64 @@ def detect_hierarchical_columns(df:pd.DataFrame,sep_re=HIER_SEP)->List[str]:
 def parse_hierarchical_column(df:pd.DataFrame, col:str,
                                prefix:str="parsed") -> pd.DataFrame:
     """
-    Split a column like  CDIP_AASC_ADC_SRZ>hivemetastore>aare>daf_mcc_odf_teack
-    into new columns:  parsed_zone, parsed_database, parsed_schema, parsed_table.
-    The original column is kept.
-    Returns a NEW dataframe with the extra columns inserted right after `col`.
+    Split a column like  CDIS_AAEDL_ADB_SRZ>hive_metastore>euc101209>tree_ops_def
+    into:  parsed_zone | parsed_database | parsed_schema | parsed_table
+
+    KEY FIX: parts are aligned from the RIGHT so that schema and table are
+    ALWAYS the last two parts regardless of how many prefix segments exist.
+
+      4 parts: zone=CDIS_AAEDL_ADB_SRZ  db=hive_metastore  schema=euc101209  table=tree_ops_def
+      3 parts: zone=(empty)              db=hive_metastore  schema=euc101209  table=tree_ops_def
+      2 parts: zone=(empty)              db=(empty)         schema=euc101209  table=tree_ops_def
+
+    This prevents hive_metastore being misidentified as the schema.
     """
     if col not in df.columns:
         return df
 
-    # Determine max depth from a sample
-    sample=df[col].dropna().head(100)
-    max_depth=0
+    # Determine depth: use the MOST COMMON depth in the sample, not the max.
+    # This prevents one outlier 5-part row from shifting schema/table for
+    # all the regular 4-part rows.
+    from collections import Counter
+    sample = df[col].dropna().head(200)
+    depth_counts: Counter = Counter()
     for v in sample:
-        parts=[p.strip() for p in HIER_SEP.split(str(v)) if p.strip()]
-        max_depth=max(max_depth,len(parts))
-    max_depth=max(2,min(max_depth,5))
+        parts = [p.strip() for p in HIER_SEP.split(str(v)) if p.strip()]
+        if len(parts) >= 2:
+            depth_counts[len(parts)] += 1
 
-    labels=HIER_LABELS.get(max_depth,[f"{prefix}_{i}" for i in range(max_depth)])
-    # If prefix differs from "parsed", rename
-    if prefix!="parsed":
-        labels=[l.replace("parsed_",f"{prefix}_") for l in labels]
+    if depth_counts:
+        # Pick modal depth; if tied prefer the higher one (more info); clamp 2–5
+        modal_depth = max(depth_counts, key=lambda d: (depth_counts[d], d))
+        modal_depth = max(2, min(modal_depth, 5))
+    else:
+        modal_depth = 4  # sensible default for zone>db>schema>table
 
-    split_data={l:[] for l in labels}
+    labels = HIER_LABELS.get(modal_depth, [f"{prefix}_{i}" for i in range(modal_depth)])
+    if prefix != "parsed":
+        labels = [l.replace("parsed_", f"{prefix}_") for l in labels]
+
+    split_data = {l: [] for l in labels}
     for v in df[col]:
-        parts=[p.strip() for p in HIER_SEP.split(str(v)) if p.strip()]
-        # Pad/trim to max_depth
-        parts=(parts+[""]*max_depth)[:max_depth]
-        for l,p in zip(labels,parts):
-            split_data[l].append(p)
+        parts = [p.strip() for p in HIER_SEP.split(str(v)) if p.strip()]
 
-    new_cols=pd.DataFrame(split_data,index=df.index)
-    # Insert after the source column
-    pos=df.columns.get_loc(col)+1
-    result=df.copy()
-    for i,lbl in enumerate(labels):
-        result.insert(pos+i,lbl,new_cols[lbl])
+        # RIGHT-ALIGN to modal_depth: pad on the LEFT with empty strings so that
+        # schema is always second-to-last and table is always last.
+        if len(parts) < modal_depth:
+            parts = [""] * (modal_depth - len(parts)) + parts
+        else:
+            # For rows deeper than modal, keep the rightmost modal_depth parts
+            # (preserves schema and table which are always at the end)
+            parts = parts[-modal_depth:]
+
+        for lbl, p in zip(labels, parts):
+            split_data[lbl].append(p)
+
+    new_cols = pd.DataFrame(split_data, index=df.index)
+    pos = df.columns.get_loc(col) + 1
+    result = df.copy()
+    for i, lbl in enumerate(labels):
+        result.insert(pos + i, lbl, new_cols[lbl])
     return result
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1486,6 +1509,55 @@ class App(ctk.CTk):
             srz_only_df = _clean(merged[ in_ref & ~in_src])
             edc_only_df = _clean(merged[~in_ref &  in_src])
 
+            # ── Near-miss analysis ────────────────────────────────────────────
+            # For SRZ-only items, find if there is a close-but-not-exact EDC value
+            # This catches cases like SRZ "101209" vs EDC "euc101209"
+            pv("Finding near-misses…"); pr(0.85)
+
+            src_schema_set = set(src_pairs["schema"].unique())
+            src_table_set  = set(src_pairs["schema"].str.cat(src_pairs["table"], sep="\t").unique())
+
+            def _find_near_miss_schema(srz_sch: str) -> str:
+                """Return closest EDC schema, or '' if no near-miss found."""
+                if not srz_sch: return ""
+                for edc_sch in src_schema_set:
+                    if srz_sch in edc_sch or edc_sch in srz_sch:
+                        return edc_sch
+                # Try suffix match (e.g. "101209" matches end of "euc101209")
+                for edc_sch in src_schema_set:
+                    if edc_sch.endswith(srz_sch) or srz_sch.endswith(edc_sch):
+                        return edc_sch
+                return ""
+
+            # Build near-miss map: srz_schema → best edc_schema
+            srz_schemas_to_check = srz_only_df["Schema"].unique()
+            near_miss_schema_map: Dict[str,str] = {}
+            for ss in srz_schemas_to_check:
+                nm = _find_near_miss_schema(ss)
+                if nm:
+                    near_miss_schema_map[ss] = nm
+
+            # Enrich srz_only with near-miss columns
+            srz_only_df = srz_only_df.copy()
+            srz_only_df["SRZ Schema (raw)"]  = srz_only_df["Schema"]
+            srz_only_df["SRZ Table (raw)"]   = srz_only_df["Table"]
+            srz_only_df["Closest EDC Schema"] = srz_only_df["Schema"].map(
+                lambda s: near_miss_schema_map.get(s,""))
+            srz_only_df["Near-Miss Note"] = srz_only_df.apply(
+                lambda r: (f"⚡ SRZ '{r['SRZ Schema (raw)']}' ≈ EDC '{r['Closest EDC Schema']}'"
+                           f" — suffix/substring match, not exact")
+                           if r["Closest EDC Schema"] else
+                           "✗ No similar schema found in EDC",
+                axis=1)
+
+            # Also enrich matched_df with the original raw column values for reference
+            # (so we can show EDC value vs SRZ value side by side even when matched)
+            matched_df = matched_df.copy()
+            matched_df["SRZ Schema"]   = matched_df["Schema"]
+            matched_df["SRZ Table"]    = matched_df["Table"]
+            matched_df["EDC Schema"]   = matched_df["Schema"]   # exact match → same
+            matched_df["EDC Table"]    = matched_df["Table"]
+
             # ── Schema-level summary ──────────────────────────────────────────
             ref_schemas=set(ref_pairs["schema"].unique())
             src_schemas=set(src_pairs["schema"].unique())
@@ -1627,7 +1699,8 @@ class App(ctk.CTk):
                              "Schema+Table pairs present in BOTH files.")
         self._build_data_tab("srz_only", C["amber"],  "⚠   In SRZ — MISSING from EDC",
                              "These tables are in your SRZ reference but could NOT be found in the EDC source.\n"
-                             "Action required: verify these were loaded into EDC / Collibra.")
+                             "The 'Closest EDC Schema' column shows if a SIMILAR (but not identical) schema exists in EDC — "
+                             "e.g. SRZ has '101209' but EDC has 'euc101209'. Action required: verify these were loaded.")
         self._build_data_tab("edc_only", C["purple"], "ℹ   In EDC — Not in SRZ",
                              "These tables are in EDC source but have no matching record in SRZ reference.")
 
@@ -1650,12 +1723,25 @@ class App(ctk.CTk):
         sv.trace_add("write",lambda *_,k=key:self._filter_dt(k))
         cnt=tk.StringVar(value=""); setattr(self,f"_dt_{key}_cnt",cnt)
         _lbl(sc,None,C["card"],C["text3"],Fs,textvariable=cnt).pack(side="right",padx=10)
-        # Tree
+        # Tree — column layout depends on tab type
         th=tk.Frame(f,bg=C["bg"]); th.pack(fill="both",expand=True)
-        tree=make_tree(th,["Schema","Table"],[300,450])
+        if key=="srz_only":
+            # Show SRZ columns + nearest EDC match side by side
+            cols=["SRZ Schema (raw)","SRZ Table (raw)","Closest EDC Schema","Near-Miss Note"]
+            widths=[200,300,200,340]
+            tree=make_tree(th,cols,widths)
+        elif key=="matched":
+            # Show SRZ vs EDC side by side (both identical for exact matches)
+            cols=["Schema","Table"]
+            widths=[300,450]
+            tree=make_tree(th,cols,widths)
+        else:
+            cols=["Schema","Table"]
+            widths=[300,450]
+            tree=make_tree(th,cols,widths)
         setattr(self,f"_dt_{key}_tree",tree)
         # Sort
-        for col in ("Schema","Table"):
+        for col in cols[:2]:
             tree.heading(col,text=col,anchor="w",
                          command=lambda c=col,k=key:self._sort_dt(k,c))
 
@@ -1684,6 +1770,11 @@ class App(ctk.CTk):
         sch_srz_only=getattr(self,"_val_sch_srz_only",[])
         sch_edc_only=getattr(self,"_val_sch_edc_only",[])
 
+        # Count near-misses (SRZ-only rows that have a similar EDC schema)
+        n_near = 0
+        if srz_only is not None and not srz_only.empty and "Closest EDC Schema" in srz_only.columns:
+            n_near = int((srz_only["Closest EDC Schema"] != "").sum())
+
         # ── Stat cards ─────────────────────────────────────────────────────────
         for w in self._stat_host.winfo_children(): w.destroy()
         cards=[
@@ -1692,6 +1783,8 @@ class App(ctk.CTk):
             (f"{n_m:,}",          "✅  Matched",                 C["green"], f"In both files"),
             (f"{cov}%",           "Coverage",                    C["teal"],  f"% of {ref_nm} found in {src_nm}"),
             (f"{n_srz:,}",        f"⚠  In {ref_nm}, Not {src_nm}",C["amber"],"Missing from EDC ← action needed"),
+            (f"{n_near:,}",       "⚡  Near-Misses",             C["amber_lt"] if n_near else C["text3"],
+                                  "SRZ gaps with similar EDC schema"),
             (f"{n_edc:,}",        f"ℹ  In {src_nm}, Not {ref_nm}",C["purple"],"Extra in EDC"),
             (f"{len(sch_srz_only)}",f"Schema Gaps",              C["red"],   "Schemas only on one side"),
         ]
@@ -1775,15 +1868,37 @@ class App(ctk.CTk):
     def _fill_dt_tree(self,tree,df:Optional[pd.DataFrame],cnt_var:tk.StringVar):
         tree.delete(*tree.get_children())
         if df is None or df.empty: cnt_var.set("0 records"); return
-        tree["columns"]=["Schema","Table"]
-        tree.heading("Schema",text="Schema",anchor="w"); tree.column("Schema",width=300,anchor="w")
-        tree.heading("Table", text="Table", anchor="w"); tree.column("Table", width=450,anchor="w")
-        cap=10_000
-        for i,(_,row) in enumerate(df.head(cap).iterrows()):
-            tree.insert("","end",values=(row.get("Schema",""),row.get("Table","")),
-                        tags=("odd" if i%2 else "even",))
+
+        # Determine which columns to display based on what's in the DataFrame
+        if "SRZ Schema (raw)" in df.columns:
+            # SRZ-only tab — show near-miss side by side
+            display_cols = ["SRZ Schema (raw)","SRZ Table (raw)",
+                            "Closest EDC Schema","Near-Miss Note"]
+            col_widths   = {"SRZ Schema (raw)":200,"SRZ Table (raw)":280,
+                            "Closest EDC Schema":200,"Near-Miss Note":340}
+        else:
+            display_cols = ["Schema","Table"]
+            col_widths   = {"Schema":300,"Table":450}
+
+        tree["columns"] = display_cols
+        for c in display_cols:
+            tree.heading(c, text=c, anchor="w")
+            tree.column(c, width=col_widths.get(c,200), minwidth=60, anchor="w")
+
+        cap = 10_000
+        for i, (_, row) in enumerate(df.head(cap).iterrows()):
+            vals = [str(row.get(c,"")) for c in display_cols]
+            # Colour-code near-miss rows: amber if near-miss found, red if not
+            if "SRZ Schema (raw)" in df.columns:
+                has_nm = bool(row.get("Closest EDC Schema",""))
+                tag = "Token Overlap" if has_nm else "Fuzzy"
+            else:
+                tag = "odd" if i%2 else "even"
+            tree.insert("","end",values=vals,tags=(tag,))
+
         if len(df)>cap:
-            tree.insert("","end",values=[f"  ⋯  {len(df)-cap:,} more — export for full list",""])
+            tree.insert("","end",values=[f"  ⋯  {len(df)-cap:,} more — export for full list"]
+                        + [""]*(len(display_cols)-1))
         cnt_var.set(f"{min(len(df),cap):,} of {len(df):,}")
 
     def _filter_dt(self,key:str):
@@ -1856,9 +1971,17 @@ class App(ctk.CTk):
                     ])
                     summ.to_excel(w,sheet_name="Executive Summary",index=False)
 
-                    # Sheet 2: The critical gaps — SRZ not in EDC
+                    # Sheet 2: The critical gaps — SRZ not in EDC (with near-miss info)
                     if not srz_only.empty:
-                        out=srz_only.copy()
+                        out = srz_only.copy()
+                        # Reorder columns for clarity
+                        near_cols = [c for c in ["SRZ Schema (raw)","SRZ Table (raw)",
+                                                  "Closest EDC Schema","Near-Miss Note"]
+                                     if c in out.columns]
+                        base_cols = [c for c in ["Schema","Table"] if c in out.columns]
+                        ordered   = near_cols if near_cols else base_cols
+                        other     = [c for c in out.columns if c not in ordered]
+                        out       = out[ordered + other]
                         out.insert(0,"Gap Type",f"In {ref_nm} — MISSING from {src_nm}")
                         out.to_excel(w,sheet_name=f"GAPS — {ref_nm} Missing in EDC",index=False)
 
@@ -1867,6 +1990,14 @@ class App(ctk.CTk):
                         out2=edc_only.copy()
                         out2.insert(0,"Gap Type",f"In {src_nm} — Not in {ref_nm}")
                         out2.to_excel(w,sheet_name=f"EDC Only — Not in {ref_nm}",index=False)
+
+                    # Sheet 3b: Near-miss summary (SRZ schemas with similar EDC counterpart)
+                    if not srz_only.empty and "Closest EDC Schema" in srz_only.columns:
+                        nm_df = srz_only[srz_only["Closest EDC Schema"]!=""][
+                            ["SRZ Schema (raw)","SRZ Table (raw)","Closest EDC Schema","Near-Miss Note"]
+                        ].drop_duplicates().sort_values(["SRZ Schema (raw)","SRZ Table (raw)"])
+                        if not nm_df.empty:
+                            nm_df.to_excel(w,sheet_name="Near-Miss (Similar but ≠)",index=False)
 
                     # Sheet 4: All gaps combined
                     all_gaps=pd.concat([
