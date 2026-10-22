@@ -1,0 +1,1065 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JobRadar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..800&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* greens */
+  --g-900:#0C2419; --g-800:#12352A; --g-700:#1B5240; --g-600:#256B52;
+  --g-500:#2F8A64; --g-400:#4FAE82; --g-300:#8ED1AF; --g-200:#C6E8D5; --g-100:#E6F3EC;
+  /* greys */
+  --s-900:#1B2327; --s-800:#26333A; --s-700:#3A4A52; --s-600:#546670; --s-500:#6F8089;
+  --s-400:#95A4AB; --s-300:#BFCAD0; --s-200:#DDE4E7; --s-100:#EEF2F3; --paper:#F4F6F5;
+  --panel:#FFFFFF; --ink:#18232A; --dim:#5F6F77; --line:#DCE4E6;
+  --mint:#5FD39B; --mint-soft:#E4F7EC; --warn:#D98A1E; --warn-soft:#FBF1DF; --danger:#B3423E; --danger-soft:#F8E4E3;
+  --radius:12px; --shadow:0 1px 2px rgba(20,35,30,.06),0 6px 22px -10px rgba(20,35,30,.18);
+  --top-h:0px;
+}
+*{box-sizing:border-box;margin:0}
+html{font-size:16px;scroll-behavior:smooth}
+body{background:linear-gradient(180deg,var(--s-100) 0,var(--paper) 320px);color:var(--ink);
+  font-family:"Archivo",system-ui,sans-serif;font-weight:420;line-height:1.45;min-height:100vh}
+a{color:var(--g-600);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--g-400);outline-offset:2px}
+kbd{font:inherit;font-size:.72rem;border:1px solid var(--s-300);border-bottom-width:2px;border-radius:5px;
+  padding:0 .35rem;color:var(--dim);background:#fff}
+[hidden]{display:none!important}
+
+/* ── status band (sticky, collapsible) ─────── */
+.top{position:sticky;top:0;z-index:20;box-shadow:0 4px 18px -8px rgba(12,36,25,.45)}
+.band{background:linear-gradient(118deg,var(--g-900) 0%,var(--g-700) 42%,var(--s-800) 78%,var(--s-900) 100%);
+  color:#EAF2EE;padding:1.3rem clamp(1rem,4vw,3rem) 1.1rem;position:relative;overflow:hidden;transition:padding .15s}
+.top.collapsed .band{padding:.5rem clamp(1rem,4vw,3rem)}
+.top.collapsed .band .wrap{align-items:center;gap:.8rem 1.6rem}
+.top.collapsed .stats,.top.collapsed .brand small,.top.collapsed .subband,.top.collapsed #export,.top.collapsed #digest-btn{display:none}
+.top.collapsed .brand{font-size:1.05rem}
+.mini{display:none;font-size:.85rem;color:var(--s-300);font-variant-numeric:tabular-nums}
+.mini b{color:var(--mint);font-weight:700}
+.top.collapsed .mini{display:inline}
+.band::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(600px 220px at 85% -20%,rgba(95,211,155,.22),transparent 70%)}
+.band .wrap{max-width:1480px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:flex-end;gap:1.2rem 2rem;position:relative}
+.brand{font-weight:750;font-size:1.25rem;letter-spacing:.01em;display:flex;align-items:center;gap:.55rem}
+.brand .logo{width:1.55rem;height:1.55rem;border-radius:8px;background:linear-gradient(135deg,var(--mint),var(--g-500));display:grid;place-items:center}
+.brand .logo::before{content:"";width:.55rem;height:.55rem;border-radius:50%;background:var(--g-900);box-shadow:0 0 0 3px rgba(12,36,25,.35)}
+.brand small{display:block;font-weight:400;font-size:.78rem;color:var(--g-300);margin-top:.1rem}
+.stats{display:flex;flex-wrap:wrap;gap:1.2rem 1.7rem}
+.stat{min-width:5.8rem}
+.stat b{display:block;font-size:1.8rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat span{font-size:.76rem;color:var(--s-300)}
+.stat.new b,.stat.match b{color:var(--mint)}
+.stat.next b{font-size:1.45rem;padding-top:.25rem}
+.band .actions{margin-left:auto;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.btn{border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.06);color:#EAF2EE;padding:.5rem .9rem;
+  border-radius:9px;font-weight:600;font-size:.85rem;transition:background .15s;text-decoration:none}
+.btn:hover{background:rgba(255,255,255,.16);text-decoration:none}
+.btn.primary{background:var(--mint);color:var(--g-900);border-color:transparent}
+.btn.primary:hover{background:#79dcac}
+.btn[disabled]{opacity:.5;cursor:wait}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--s-300);padding:.45rem .6rem;font-size:.8rem}
+.usersw{display:inline-flex;align-items:center;gap:.1rem;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.25);border-radius:9px;padding:.1rem .2rem .1rem .5rem}
+.usersw select{background:transparent;border:0;color:#fff;font:inherit;font-weight:650;font-size:.88rem;padding:.35rem .2rem;max-width:11rem}
+.usersw select option{color:var(--ink)}
+.usersw .btn.ghost{padding:.3rem .45rem}
+.prefbar{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-top:.2rem}
+.prefbar small{color:var(--dim);font-size:.72rem}
+.prefbar button{border:0;background:none;color:var(--g-600);font-size:.76rem;font-weight:600;padding:0}
+.btn.ghost:hover{color:#fff;background:rgba(255,255,255,.1)}
+.pulse{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;background:var(--mint);margin-right:.45rem;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.pulse{animation:none}}
+.subband{background:var(--s-900);color:var(--s-300);font-size:.8rem;padding:.45rem clamp(1rem,4vw,3rem)}
+.subband .wrap{max-width:1480px;margin:0 auto;display:flex;flex-wrap:wrap;gap:.4rem 1.6rem;align-items:center}
+.subband b{color:#fff;font-weight:600}
+.subband .err{color:#F3C38B;cursor:pointer}
+.subband .err-detail{display:none;width:100%;white-space:pre-wrap;color:#E8CDAA;font-size:.75rem;max-height:9rem;overflow:auto;padding-top:.3rem}
+.subband .err-detail.open{display:block}
+
+/* ── tabs + layout ─────────────────────────── */
+.tabs{max-width:1480px;margin:1.1rem auto 0;padding:0 clamp(1rem,4vw,3rem);display:flex;gap:.3rem;flex-wrap:wrap}
+.tabs button{border:1px solid var(--line);background:#fff;color:var(--dim);border-radius:9px 9px 0 0;padding:.55rem 1rem;font-weight:650;font-size:.88rem;border-bottom:0}
+.tabs button.on{background:var(--g-700);color:#fff;border-color:var(--g-700)}
+.tabs button small{font-weight:500;color:inherit;opacity:.75;margin-left:.3rem}
+.page{max-width:1480px;margin:0 auto 4rem;padding:0 clamp(1rem,4vw,3rem);display:grid;grid-template-columns:262px 1fr;gap:1.3rem;align-items:start}
+.page.wide{grid-template-columns:1fr}
+@media (max-width:900px){.page{grid-template-columns:1fr}.rail{position:static}}
+
+/* filter rail */
+.rail{position:sticky;top:calc(var(--top-h) + 1rem);background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:1rem 1.05rem 1.1rem;box-shadow:var(--shadow);max-height:calc(100vh - var(--top-h) - 2rem);overflow:auto}
+.rail h2{font-size:.92rem;font-weight:700;display:flex;justify-content:space-between;align-items:center}
+.rail h2 button{border:0;background:none;color:var(--g-600);font-size:.78rem;font-weight:600;padding:0}
+.rail label.lbl{display:block;font-size:.75rem;color:var(--dim);margin:.85rem 0 .3rem;text-transform:uppercase;letter-spacing:.05em;font-weight:650}
+.rail input[type=search],.rail select{width:100%;padding:.5rem .6rem;border:1px solid var(--s-300);border-radius:8px;font:inherit;font-size:.88rem;background:#fff;color:var(--ink)}
+.rail input[type=search]:focus,.rail select:focus{border-color:var(--g-400)}
+.seg{display:flex;border:1px solid var(--s-300);border-radius:8px;overflow:hidden}
+.seg button{flex:1;border:0;background:#fff;padding:.42rem .2rem;font-size:.76rem;font-weight:600;color:var(--dim)}
+.seg button+button{border-left:1px solid var(--s-300)}
+.seg button.on{background:var(--g-700);color:#fff}
+.check{display:flex;gap:.5rem;align-items:center;margin-top:.55rem;font-size:.86rem;color:var(--ink);cursor:pointer}
+.check input{accent-color:var(--g-600);width:1rem;height:1rem;margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:.35rem}
+.chips button{border:1px solid var(--s-300);background:#fff;border-radius:99px;padding:.22rem .6rem;font-size:.76rem;font-weight:600;color:var(--dim)}
+.chips button.on{background:var(--g-100);border-color:var(--g-400);color:var(--g-800)}
+.chips button small{color:var(--s-400);font-weight:500;margin-left:.25rem}
+/* dropdown multi-select (categories, sectors, seniority, only-show) */
+.dd{position:relative}
+.dd-btn{width:100%;display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.5rem .6rem;border:1px solid var(--s-300);border-radius:8px;background:#fff;color:var(--ink);font:inherit;font-size:.88rem;text-align:left;cursor:pointer}
+.dd-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-btn i{font-style:normal;color:var(--dim);font-size:.8rem}
+.dd-btn.has{border-color:var(--g-400);color:var(--g-800);font-weight:600}
+.dd.open .dd-btn{border-color:var(--g-400)}
+.dd-menu{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:#fff;border:1px solid var(--s-300);border-radius:8px;box-shadow:var(--shadow);padding:.35rem;max-height:17rem;overflow:auto}
+.dd.open .dd-menu{display:block}
+.dd-item{display:flex;align-items:center;gap:.5rem;padding:.35rem .45rem;border-radius:6px;font-size:.85rem;color:var(--ink);cursor:pointer}
+.dd-item:hover{background:var(--s-100)}
+.dd-item input{accent-color:var(--g-600);width:1rem;height:1rem;margin:0;flex:none}
+.dd-item span{flex:1}
+.dd-item small{color:var(--s-400);font-variant-numeric:tabular-nums}
+.dd-clear{display:block;width:100%;border:0;border-top:1px solid var(--line);background:none;color:var(--g-600);font-size:.78rem;font-weight:600;padding:.4rem;margin-top:.25rem;text-align:left;cursor:pointer}
+.badge.travel{background:var(--warn-soft);color:#7A4E07}
+
+/* cards / ledger */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;padding:.85rem 1.2rem;border-bottom:1px solid var(--line);background:linear-gradient(90deg,var(--g-100),#fff 60%)}
+.card-head h1,.card-head h2{font-size:1.02rem;font-weight:700}
+.card-head h1 span,.card-head h2 span{font-size:.85rem;color:var(--dim);font-weight:500;margin-left:.5rem;font-variant-numeric:tabular-nums}
+.card-body{padding:1rem 1.2rem}
+.sortbar{display:flex;gap:.5rem;align-items:center;font-size:.82rem;color:var(--dim)}
+.sortbar select{padding:.35rem .5rem;border:1px solid var(--s-300);border-radius:7px;font:inherit;font-size:.82rem;background:#fff}
+.row{display:grid;grid-template-columns:1fr auto;gap:.15rem 1.2rem;padding:.9rem 1.2rem .9rem 1rem;border-bottom:1px solid var(--line);border-left:4px solid transparent;transition:background .12s}
+.row:hover{background:var(--s-100)}
+.row:last-child{border-bottom:0}
+.row.new{border-left-color:var(--mint);background:linear-gradient(90deg,var(--mint-soft),transparent 40%)}
+.row.new:hover{background:linear-gradient(90deg,var(--mint-soft),var(--s-100) 40%)}
+.row.saved{border-left-color:var(--warn)}
+.row.applied,.row.interviewing,.row.offer{border-left-color:var(--g-600)}
+.row.rejected,.row.hidden-status,.row.archived{opacity:.6}
+.row.stale .title a{color:var(--s-500)}
+.row .title{font-weight:650;font-size:1rem;display:flex;flex-wrap:wrap;align-items:center;gap:.3rem .5rem}
+.row .title a{color:var(--ink)}
+.row .title a:hover{color:var(--g-600)}
+.badge{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.7rem;font-weight:700;vertical-align:2px;letter-spacing:.01em;white-space:nowrap}
+.badge.new{background:var(--mint);color:var(--g-900)}
+.badge.easy{background:var(--g-700);color:#fff}
+.badge.easy::before{content:"⚡ "}
+.badge.remote{background:var(--s-200);color:var(--s-700)}
+.badge.level{background:#fff;border:1px solid var(--g-300);color:var(--g-700)}
+.badge.st{background:var(--warn-soft);color:#7A4E07}
+.badge.st.applied,.badge.st.interviewing,.badge.st.offer{background:var(--g-100);color:var(--g-800)}
+.badge.st.rejected,.badge.stale{background:var(--s-200);color:var(--s-600)}
+.badge.watch{background:var(--warn-soft);color:#7A4E07}
+.match{display:inline-flex;align-items:center;gap:.35rem;font-weight:700;font-variant-numeric:tabular-nums;font-size:.95rem}
+.match .ring{width:2.1rem;height:2.1rem;border-radius:50%;display:grid;place-items:center;font-size:.72rem;font-weight:800;color:#fff;
+  background:conic-gradient(var(--g-500) calc(var(--p)*1%),var(--s-200) 0)}
+.match .ring span{width:1.55rem;height:1.55rem;border-radius:50%;background:#fff;display:grid;place-items:center;color:var(--g-800)}
+.match.strong .ring{background:conic-gradient(var(--g-600) calc(var(--p)*1%),var(--g-200) 0)}
+.match.weak .ring span{color:var(--s-500)}
+.meta{color:var(--dim);font-size:.86rem;margin-top:.2rem;display:flex;flex-wrap:wrap;gap:.2rem .45rem;align-items:center}
+.meta b{color:var(--ink);font-weight:560}
+.meta .flag{font-size:.72rem;font-weight:700;color:var(--s-500);border:1px solid var(--s-300);border-radius:4px;padding:0 .3rem}
+.meta .sector{font-size:.7rem;font-weight:650;color:var(--g-800);background:var(--g-100);border-radius:4px;padding:.05rem .4rem;cursor:pointer}
+.meta .sector:hover{background:var(--g-200)}
+.cform select{padding:.5rem .6rem;border:1px solid var(--s-300);border-radius:8px;font:inherit;font-size:.85rem;background:#fff;color:var(--ink)}
+.tbl select.secsel{padding:.2rem .3rem;border:1px solid var(--s-300);border-radius:6px;font:inherit;font-size:.76rem;background:#fff;max-width:11rem}
+.side{text-align:right;font-size:.8rem;color:var(--dim);font-variant-numeric:tabular-nums;display:flex;flex-direction:column;gap:.15rem;justify-content:center;align-items:flex-end;min-width:9rem}
+.salary{color:var(--g-800);font-weight:700;font-size:1.02rem}
+.salary small{font-weight:500;color:var(--dim);font-size:.72rem}
+.salary.none{color:var(--s-400);font-weight:500;font-size:.8rem}
+.site{font-weight:600;color:var(--s-600);text-transform:capitalize}
+.acts{grid-column:1/-1;display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.5rem;align-items:center}
+.acts button,.acts a.abtn,.mbtn{border:1px solid var(--s-300);background:#fff;color:var(--s-700);border-radius:7px;padding:.28rem .6rem;font-size:.76rem;font-weight:600;line-height:1.3;text-decoration:none}
+.acts button:hover,.acts a.abtn:hover,.mbtn:hover{border-color:var(--g-400);color:var(--g-800);text-decoration:none;background:var(--g-100)}
+.acts button.on{background:var(--g-700);color:#fff;border-color:var(--g-700)}
+.acts button.hide.on{background:var(--s-600);border-color:var(--s-600)}
+.acts a.abtn.direct{border-color:var(--g-500);color:var(--g-800);background:var(--g-100)}
+.acts .more{margin-left:auto;border:0;background:none;color:var(--dim);padding:.28rem .3rem}
+.acts select.stage{border:1px solid var(--s-300);border-radius:7px;padding:.25rem .4rem;font:inherit;font-size:.76rem;background:#fff;color:var(--s-700)}
+.detail{grid-column:1/-1;display:none;margin-top:.7rem;padding-top:.7rem;border-top:1px dashed var(--line);gap:1rem;grid-template-columns:1fr 300px}
+.row.open .detail{display:grid}
+@media (max-width:760px){.detail{grid-template-columns:1fr}}
+.desc{color:var(--s-700);font-size:.85rem;white-space:pre-wrap;max-height:22rem;overflow:auto;line-height:1.5;padding-right:.5rem}
+.facts{font-size:.8rem;color:var(--dim);display:grid;gap:.45rem;align-content:start}
+.facts div b{display:block;color:var(--ink);font-weight:600;font-size:.82rem}
+.facts textarea{width:100%;min-height:4.5rem;border:1px solid var(--s-300);border-radius:7px;padding:.45rem;font:inherit;font-size:.82rem;resize:vertical}
+.facts .saved-note{color:var(--g-600);font-size:.72rem;height:1rem}
+.why{display:flex;flex-wrap:wrap;gap:.25rem;margin-top:.2rem}
+.why span{font-size:.72rem;border-radius:99px;padding:.1rem .5rem;background:var(--g-100);color:var(--g-800);font-weight:600}
+.why span.gap{background:var(--s-100);color:var(--s-600);border:1px dashed var(--s-300)}
+.llm{grid-column:1/-1;border-top:1px dashed var(--line);padding-top:.7rem;display:grid;gap:.6rem}
+.llm .bar{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;font-size:.78rem;color:var(--dim)}
+.md{font-size:.86rem;line-height:1.5;color:var(--s-800);background:var(--s-100);border-radius:8px;padding:.8rem 1rem;max-width:80ch}
+.md h3,.md h4{font-size:.9rem;margin:.5rem 0 .2rem}
+.md p{margin:.35rem 0}.md ul{margin:.25rem 0 .25rem 1.2rem}.md li{margin:.15rem 0}
+.md.letter{white-space:pre-wrap;background:#fff;border:1px solid var(--line)}
+.tailor{display:grid;gap:.7rem;font-size:.85rem;background:var(--s-100);border-radius:8px;padding:.9rem 1rem}
+.tailor h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:.2rem 0 .1rem}
+.tailor .verdict{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;font-size:.92rem}
+.tailor .verdict .badge{font-size:.76rem;padding:.2rem .6rem}
+.tailor .badge.Strong{background:var(--g-700);color:#fff}.tailor .badge.Good{background:var(--g-400);color:var(--g-900)}
+.tailor .badge.Stretch{background:var(--warn-soft);color:#7A4E07}.tailor .badge.Weak{background:var(--s-200);color:var(--s-700)}
+.tailor ul{margin:0 0 0 1.1rem;display:grid;gap:.25rem}
+.tailor .gap{display:grid;grid-template-columns:auto 1fr;gap:.2rem .6rem;padding:.45rem .6rem;background:#fff;border:1px solid var(--line);border-radius:7px}
+.tailor .gap .imp{font-size:.68rem;font-weight:800;text-transform:uppercase;border-radius:4px;padding:.1rem .35rem;align-self:start;margin-top:.15rem}
+.tailor .gap .imp.must{background:var(--danger-soft);color:var(--danger)}.tailor .gap .imp.nice{background:var(--s-200);color:var(--s-700)}
+.tailor .gap b{color:var(--ink)}.tailor .gap small{color:var(--dim);display:block}
+.tailor .gap em{color:var(--s-600);font-style:italic}
+.tailor .rw{background:#fff;border:1px solid var(--line);border-radius:7px;padding:.45rem .6rem;display:grid;gap:.2rem}
+.tailor .rw .o{color:var(--s-500);text-decoration:line-through;font-size:.8rem}.tailor .rw .n{color:var(--ink)}
+.tailor .rw .n::before{content:"→ ";color:var(--g-600);font-weight:700}.tailor .rw small{color:var(--dim)}
+.tailor .sum{background:#fff;border-left:3px solid var(--g-500);padding:.5rem .7rem;border-radius:0 7px 7px 0;color:var(--ink)}
+.tailor .kw{display:flex;flex-wrap:wrap;gap:.25rem}.tailor .kw span{font-size:.74rem;border-radius:99px;padding:.12rem .5rem;background:var(--g-100);color:var(--g-800);font-weight:600}
+.empty{padding:3rem 1.3rem;color:var(--dim);font-size:.95rem;text-align:center}
+.empty b{display:block;color:var(--ink);font-size:1.05rem;margin-bottom:.3rem}
+.pager{display:flex;align-items:center;gap:.3rem;flex-wrap:wrap;font-size:.82rem;color:var(--dim);font-variant-numeric:tabular-nums}
+.pager button{border:1px solid var(--s-300);background:#fff;color:var(--s-700);border-radius:7px;min-width:2rem;height:2rem;padding:0 .5rem;font-size:.82rem;font-weight:600}
+.pager button:hover{border-color:var(--g-400);color:var(--g-800);background:var(--g-100)}
+.pager button.on{background:var(--g-700);border-color:var(--g-700);color:#fff}
+.pager button[disabled]{opacity:.4;cursor:default;background:#fff;color:var(--s-700);border-color:var(--s-300)}
+.pager .gap{padding:0 .2rem;color:var(--s-400)}
+.pager .info{margin:0 .4rem}
+.pager-bottom{padding:.8rem 1.2rem;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;background:var(--s-100)}
+.perpage{display:flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--dim)}
+.perpage select{padding:.3rem .45rem;border:1px solid var(--s-300);border-radius:7px;font:inherit;font-size:.82rem;background:#fff}
+.toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:var(--s-900);color:#fff;padding:.55rem 1rem;border-radius:9px;font-size:.85rem;opacity:0;transition:opacity .2s;pointer-events:none;z-index:99}
+.toast.show{opacity:1}
+
+/* resume panel */
+.resume-card{margin-bottom:1rem}
+.resume-card .card-body{display:grid;grid-template-columns:1fr auto;gap:1rem;align-items:start}
+@media (max-width:760px){.resume-card .card-body{grid-template-columns:1fr}}
+.drop{border:2px dashed var(--s-300);border-radius:10px;padding:1.2rem;text-align:center;color:var(--dim);font-size:.88rem;cursor:pointer;background:var(--s-100)}
+.drop.over{border-color:var(--g-500);background:var(--g-100)}
+.drop b{color:var(--g-800)}
+.resume-meta{font-size:.85rem;color:var(--dim)}
+.resume-meta b{color:var(--ink)}
+.resume-actions{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center}
+.note{font-size:.78rem;color:var(--dim);margin-top:.5rem}
+
+/* pipeline */
+.board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.8rem;align-items:start}
+@media (max-width:1100px){.board{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:640px){.board{grid-template-columns:1fr}}
+.col{background:var(--s-100);border:1px solid var(--line);border-radius:10px;min-height:10rem;padding:.6rem}
+.col.over{background:var(--g-100);border-color:var(--g-400)}
+.col h3{font-size:.82rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:flex;justify-content:space-between;padding:.2rem .3rem .6rem}
+.col h3 span{font-variant-numeric:tabular-nums;color:var(--ink)}
+.kcard{background:#fff;border:1px solid var(--line);border-radius:8px;padding:.6rem .7rem;margin-bottom:.5rem;cursor:grab;font-size:.84rem;box-shadow:0 1px 2px rgba(20,35,30,.05)}
+.kcard.dragging{opacity:.5}
+.kcard .t{font-weight:650;color:var(--ink)}
+.kcard .c{color:var(--dim);font-size:.8rem}
+.kcard .f{display:flex;justify-content:space-between;align-items:center;margin-top:.4rem;font-size:.74rem;color:var(--s-500)}
+.kcard .mv{display:flex;gap:.2rem}
+.kcard .mv button{border:1px solid var(--s-300);background:#fff;border-radius:5px;padding:0 .35rem;font-size:.75rem;color:var(--s-700)}
+.kcard .mv button:hover{background:var(--g-100)}
+.kcard.stale{border-style:dashed}
+
+/* insights */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media (max-width:1000px){.grid2{grid-template-columns:1fr}}
+.chart{position:relative;padding:.3rem 0}
+.crow{display:grid;grid-template-columns:8.5rem 1fr 6rem;gap:.6rem;align-items:center;font-size:.82rem;padding:.3rem 0}
+.crow .lab{color:var(--ink);font-weight:600;text-align:right}
+.crow .n{color:var(--s-500);text-align:right;font-variant-numeric:tabular-nums;font-size:.76rem}
+.track{position:relative;height:1.2rem}
+.track .whisk{position:absolute;top:50%;height:2px;background:var(--s-300);transform:translateY(-50%)}
+.track .iqr{position:absolute;top:2px;bottom:2px;background:var(--g-400);border-radius:4px}
+.track .med{position:absolute;top:0;bottom:0;width:3px;background:var(--g-900);border-radius:2px;transform:translateX(-50%)}
+.track:hover .iqr{background:var(--g-500)}
+.axis{display:grid;grid-template-columns:8.5rem 1fr 6rem;gap:.6rem;font-size:.72rem;color:var(--s-500);font-variant-numeric:tabular-nums}
+.axis div:nth-child(2){display:flex;justify-content:space-between}
+.tip{position:fixed;z-index:50;background:var(--s-900);color:#fff;font-size:.76rem;padding:.4rem .6rem;border-radius:6px;pointer-events:none;display:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+.hist{display:flex;align-items:flex-end;gap:.35rem;height:7rem;padding:.4rem 0 0}
+.hist div{flex:1;background:var(--g-400);border-radius:4px 4px 0 0;position:relative;min-height:2px}
+.hist div i{position:absolute;bottom:-1.2rem;left:0;right:0;text-align:center;font-style:normal;font-size:.7rem;color:var(--s-500)}
+.hist div b{position:absolute;top:-1.1rem;left:0;right:0;text-align:center;font-size:.7rem;color:var(--ink)}
+table.tbl{width:100%;border-collapse:collapse;font-size:.84rem}
+.tbl th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:650;padding:.4rem .5rem;border-bottom:1px solid var(--line)}
+.tbl td{padding:.45rem .5rem;border-bottom:1px solid var(--s-100);font-variant-numeric:tabular-nums}
+.tbl td.num,.tbl th.num{text-align:right}
+.tbl tr:hover td{background:var(--s-100)}
+.tbl .bar{display:inline-block;height:.5rem;background:var(--g-400);border-radius:3px;vertical-align:middle;margin-right:.4rem}
+.caption{font-size:.76rem;color:var(--dim);margin-top:.6rem}
+
+/* apply */
+.form{display:grid;grid-template-columns:1fr 1fr;gap:.55rem .8rem;font-size:.84rem}
+.form label{display:grid;gap:.2rem;color:var(--dim)}
+.form label.wide{grid-column:1/-1}
+.form input,.form select,.form textarea{padding:.42rem .55rem;border:1px solid var(--s-300);border-radius:7px;font:inherit;font-size:.86rem;background:#fff;color:var(--ink)}
+.form input:focus,.form select:focus{border-color:var(--g-400)}
+.form h4{grid-column:1/-1;font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:.5rem 0 0;padding-top:.5rem;border-top:1px solid var(--line)}
+.form .chk{display:flex;gap:.5rem;align-items:center;flex-direction:row;color:var(--ink)}
+.form .chk input{width:1rem;height:1rem;accent-color:var(--g-600)}
+.custom-q{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;align-items:center}
+.custom-q button{border:0;background:none;color:var(--danger);font-weight:600}
+.state{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.7rem;font-weight:700}
+.state.queued{background:var(--s-200);color:var(--s-700)}.state.preparing{background:var(--warn-soft);color:#7A4E07}
+.state.prepared{background:var(--g-200);color:var(--g-900)}.state.needs_review{background:var(--warn-soft);color:#7A4E07}
+.state.submitted{background:var(--g-700);color:#fff}.state.failed{background:var(--danger-soft);color:var(--danger)}.state.skipped{background:var(--s-100);color:var(--s-500)}
+.warnbox{background:var(--warn-soft);border:1px solid #EAD1A3;border-radius:8px;padding:.6rem .8rem;font-size:.82rem;color:#5A3A06;grid-column:1/-1}
+
+/* companies */
+.cform{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:1rem}
+.cform input{flex:1;min-width:14rem;padding:.5rem .6rem;border:1px solid var(--s-300);border-radius:8px;font:inherit;font-size:.88rem}
+.clist{display:grid;gap:.3rem}
+.clist div{display:flex;justify-content:space-between;align-items:center;gap:.6rem;padding:.45rem .6rem;border:1px solid var(--line);border-radius:8px;font-size:.86rem;background:#fff}
+.clist div small{color:var(--dim)}
+.clist div button{border:0;background:none;color:var(--danger);font-weight:600;font-size:.78rem}
+</style>
+</head>
+<body>
+
+<div class="top" id="top">
+<header class="band">
+  <div class="wrap">
+    <div class="brand"><span class="logo"></span><div>JobRadar
+      <small>Indeed · LinkedIn · Glassdoor · ZipRecruiter · Google Jobs · employer, international-organization &amp; consulting career sites · US, Canada, UAE &amp; global remote hubs</small></div>
+    </div>
+    <span class="mini"><b id="mini-new">–</b> new in 24 h · <b id="mini-total">–</b> tracked · next sweep <b id="mini-next">–</b></span>
+    <div class="stats">
+      <div class="stat new"><b id="stat-new">–</b><span>new in 24 h</span></div>
+      <div class="stat"><b id="stat-total">–</b><span>tracked</span></div>
+      <div class="stat match"><b id="stat-match">–</b><span>strong matches</span></div>
+      <div class="stat"><b id="stat-easy">–</b><span>easy apply</span></div>
+      <div class="stat"><b id="stat-salary">–</b><span>with salary</span></div>
+      <div class="stat"><b id="stat-saved">–</b><span>saved</span></div>
+      <div class="stat"><b id="stat-applied">–</b><span>applied</span></div>
+      <div class="stat next"><b id="stat-next">–</b><span>next sweep</span></div>
+    </div>
+    <div class="actions">
+      <span id="live" hidden><span class="pulse"></span>sweeping…</span>
+      <span class="usersw"><select id="user-sel" title="Who is using JobRadar right now"></select><button class="btn ghost" id="user-add" title="Add a person">＋</button><button class="btn ghost" id="user-edit" title="Rename / remove this person">✎</button></span>
+      <a class="btn" id="digest-btn" href="/api/digest" target="_blank" rel="noopener">Digest</a>
+      <a class="btn" id="export" href="/api/jobs.csv" download>Export CSV</a>
+      <button class="btn primary" id="refresh">Sweep now</button>
+      <button class="btn ghost" id="top-toggle" title="Collapse or expand this panel">Hide panel ▴</button>
+    </div>
+  </div>
+</header>
+<div class="subband"><div class="wrap" id="subband">Loading…</div></div>
+</div>
+
+<nav class="tabs" id="tabs">
+  <button data-tab="openings" class="on">Openings</button>
+  <button data-tab="matches">Best matches</button>
+  <button data-tab="pipeline">Pipeline <small id="tab-pipe-n"></small></button>
+  <button data-tab="insights">Insights</button>
+  <button data-tab="companies">Companies</button>
+  <button data-tab="apply">Apply <small id="tab-apply-n"></small></button>
+</nav>
+
+<main class="page" id="page">
+  <aside class="rail" id="rail">
+    <h2>Filters <button id="reset" type="button">Reset</button></h2>
+
+    <label class="lbl">Categories</label>
+    <div class="dd" id="f-cat"></div>
+    <label class="lbl" title="Who the employer is: international organizations, consulting firms, contractors, banks…">Sectors</label>
+    <div class="dd" id="f-sector"></div>
+    <div class="prefbar"><small id="pref-note"></small><button type="button" id="pref-save" title="Remember these categories, sectors, seniority, country, remote and travel settings as this person's defaults">Save as my defaults</button></div>
+
+    <label class="lbl" for="f-q">Search</label>
+    <input id="f-q" type="search" placeholder="title, company, location…  ( / )">
+
+    <label class="lbl" for="f-status">Tracking</label>
+    <select id="f-status">
+      <option value="active">Active</option>
+      <option value="pipeline">In my pipeline</option>
+      <option value="hidden">Hidden</option>
+      <option value="archived">Archived</option>
+    </select>
+
+    <label class="lbl" for="f-match">Minimum match</label>
+    <select id="f-match">
+      <option value="0">Any</option>
+      <option value="50">50%+</option>
+      <option value="60">60%+</option>
+      <option value="70">70%+</option>
+      <option value="80">80%+</option>
+    </select>
+
+    <label class="lbl">Seniority</label>
+    <div class="dd" id="f-level"></div>
+
+    <label class="lbl" for="f-country">Country</label>
+    <select id="f-country">
+      <option value="">All countries</option>
+      <option value="US,CA">US + Canada</option>
+    </select>
+
+    <label class="lbl" for="f-site">Source</label>
+    <select id="f-site">
+      <option value="">All sources</option>
+    </select>
+
+    <label class="lbl" for="f-term">Search term</label>
+    <select id="f-term"><option value="">All terms</option></select>
+
+    <label class="lbl" for="f-since">Added to radar</label>
+    <select id="f-since">
+      <option value="0">Any time</option>
+      <option value="24">Last 24 hours</option>
+      <option value="72">Last 3 days</option>
+      <option value="168">Last week</option>
+      <option value="336">Last 2 weeks</option>
+    </select>
+
+    <label class="lbl" for="f-minsal">Minimum salary</label>
+    <select id="f-minsal">
+      <option value="0">Any</option>
+      <option value="100000">$100k+</option>
+      <option value="125000">$125k+</option>
+      <option value="150000">$150k+</option>
+      <option value="175000">$175k+</option>
+      <option value="200000">$200k+</option>
+      <option value="250000">$250k+</option>
+    </select>
+
+    <label class="lbl" for="f-stale">Likely filled</label>
+    <select id="f-stale">
+      <option value="">Show</option>
+      <option value="hide">Hide</option>
+      <option value="only">Only these</option>
+    </select>
+
+    <label class="lbl">Only show</label>
+    <div class="dd" id="f-only"><button type="button" class="dd-btn"><span>Everything</span><i>▾</i></button><div class="dd-menu">
+      <label class="dd-item"><input id="f-new" type="checkbox"> <span>New since last sweep</span></label>
+      <label class="dd-item"><input id="f-remote" type="checkbox"> <span>Remote</span></label>
+      <label class="dd-item"><input id="f-easy" type="checkbox"> <span>Easy apply</span></label>
+      <label class="dd-item"><input id="f-salary" type="checkbox"> <span>Salary listed</span></label>
+      <label class="dd-item" title="Hides postings whose description asks for travel"><input id="f-travel" type="checkbox"> <span>No travel required</span></label>
+    </div></div>
+  </aside>
+
+  <div id="content">
+    <!-- Openings / Best matches -->
+    <section id="view-list">
+      <div class="card resume-card" id="resume-card" hidden></div>
+      <div class="card">
+        <div class="card-head">
+          <h1 id="list-title">Openings <span id="count"></span></h1>
+          <div class="pager" id="pager-top"></div>
+          <div class="sortbar" id="sortbar">Sort
+            <select id="f-sort">
+              <option value="newest">Newest on radar</option>
+              <option value="match">Best match</option>
+              <option value="posted">Date posted</option>
+              <option value="salary">Salary, high → low</option>
+              <option value="company">Company A → Z</option>
+              <option value="title">Title A → Z</option>
+            </select>
+          </div>
+        </div>
+        <div id="rows"><div class="empty">Loading…</div></div>
+        <div class="pager-bottom" id="pager-bottom-wrap" hidden>
+          <div class="pager" id="pager-bottom"></div>
+          <label class="perpage">Per page
+            <select id="f-per"><option value="8">8</option><option value="12">12</option><option value="20">20</option><option value="50">50</option></select>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pipeline -->
+    <section id="view-pipeline" hidden>
+      <div class="card">
+        <div class="card-head"><h1>Pipeline <span id="pipe-count"></span></h1>
+          <span class="note">Drag cards between stages, or use ◀ ▶. Days shown = time in the current stage.</span></div>
+        <div class="card-body"><div class="board" id="board"></div></div>
+      </div>
+    </section>
+
+    <!-- Insights -->
+    <section id="view-insights" hidden>
+      <div class="grid2">
+        <div class="card"><div class="card-head"><h2>Salary by seniority <span id="sal-n"></span></h2></div>
+          <div class="card-body"><div class="chart" id="chart-level"></div>
+            <div class="caption">Bar = middle half of listed salaries (25th–75th percentile), dark tick = median, thin line = full range. Annualised USD/CAD as listed. Hover a bar for the numbers.</div></div></div>
+        <div class="card"><div class="card-head"><h2>Resume match spread</h2></div>
+          <div class="card-body"><div class="hist" id="hist"></div><div class="caption" style="margin-top:1.5rem">Active roles by match score bucket. Upload a resume to populate.</div></div></div>
+        <div class="card"><div class="card-head"><h2>Search-term performance</h2></div>
+          <div class="card-body" style="overflow-x:auto"><table class="tbl" id="tbl-terms"></table>
+            <div class="caption">Which configured terms produce roles you act on. Prune weak ones in config.yaml to shorten sweeps.</div></div></div>
+        <div class="card"><div class="card-head"><h2>Likely filled <span id="stale-n"></span></h2></div>
+          <div class="card-body" id="stale-box"></div></div>
+        <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Roles by sector</h2></div>
+          <div class="card-body" style="overflow-x:auto"><table class="tbl" id="tbl-sectors"></table>
+            <div class="caption">Who is hiring for your categories. Click a sector to open it in Openings. Sectors come from the organizations catalogue, the board's industry label and employer-name rules in config.yaml.</div></div></div>
+        <div class="card" style="grid-column:1/-1"><div class="card-head"><h2>Salary by search term</h2></div>
+          <div class="card-body" style="overflow-x:auto"><table class="tbl" id="tbl-salterm"></table></div></div>
+      </div>
+    </section>
+
+    <!-- Apply -->
+    <section id="view-apply" hidden>
+      <div class="card" style="margin-bottom:1rem">
+        <div class="card-head"><h2>Application queue <span id="apply-n"></span></h2>
+          <div class="resume-actions"><button class="mbtn" id="apply-scan">Scan for eligible roles</button><button class="mbtn" id="apply-run" title="Unattended: prepare and submit queued roles up to the daily cap">▶ Run queue (auto-submit)</button><button class="mbtn" id="apply-close">Close browser</button></div></div>
+        <div class="card-body">
+          <div class="note" id="apply-status" style="margin:0 0 .8rem"></div>
+          <div style="overflow-x:auto"><table class="tbl" id="tbl-apply"></table></div>
+          <div class="note"><b>How it works.</b> "Prepare" opens a real Chrome window, fills the employer's form from your profile, attaches the tailored resume (Word) and cover letter, answers the demographic and screening questions you preconfigured, then stops so you can check it and press Submit yourself; the dashboard notices the confirmation and marks the role Applied. With <b>auto-submit</b> on, roles that meet your rules are submitted without review, up to the daily cap. Supported: Greenhouse, Lever, Ashby, SmartRecruiters, Workable career sites. Workday, LinkedIn and Indeed need an account and are not automated.</div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card"><div class="card-head"><h2>Apply rules</h2><button class="mbtn" id="rules-save">Save rules</button></div>
+          <div class="card-body" id="rules-form"></div></div>
+        <div class="card"><div class="card-head"><h2>Applicant profile</h2><button class="mbtn" id="profile-save">Save profile</button></div>
+          <div class="card-body" id="profile-form"></div></div>
+      </div>
+    </section>
+
+    <!-- Companies -->
+    <section id="view-companies" hidden>
+      <div class="card" style="margin-bottom:1rem">
+        <div class="card-head"><h2>Career sites checked directly <span id="ats-n"></span></h2>
+          <div class="resume-actions"><button class="mbtn" id="ats-discover">Discover from stored links</button><button class="mbtn" id="ats-run">Check sites now</button></div></div>
+        <div class="card-body">
+          <form class="cform" id="ats-form"><input placeholder="Paste any careers-page or job link: Workday, Oracle Cloud, SuccessFactors, Cornerstone, Taleo, UN Careers, Greenhouse, Lever, Ashby, SmartRecruiters, Workable, BambooHR" required><select id="ats-sector" title="Which sector this organization's roles belong to"><option value="">Sector: detect from name</option></select><button class="mbtn" type="submit">+ Add site</button></form>
+          <div class="note" id="ats-last" style="margin:0 0 .8rem"></div>
+          <div class="cform" style="margin-bottom:.6rem"><input id="ats-q" type="search" placeholder="Filter sites by name, system or sector…" style="max-width:22rem"></div>
+          <div style="overflow-x:auto"><table class="tbl" id="tbl-ats"></table></div>
+          <div class="note">International organizations (IMF, World Bank, UN Secretariat, UNDP, UNHCR, WFP, WHO, ILO, IDB, EBRD…), consulting firms and government contractors come from the <code>organizations</code> catalogue in config.yaml, which also fixes their sector; everything else is found automatically from the "apply at employer" links Indeed and LinkedIn return. All are checked at the start of every sweep. Titles go through the same filters as the big boards; only new postings have their descriptions fetched. Cornerstone and Taleo sites give title, location and link only. Change a site's sector here and its stored roles are re-tagged.</div>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="card"><div class="card-head"><h2>Watchlist <span id="watch-n"></span></h2></div>
+          <div class="card-body">
+            <form class="cform" id="watch-form"><input placeholder="Company name" required><button class="mbtn" type="submit">★ Watch</button></form>
+            <div class="clist" id="watch-list"></div>
+            <div class="note">Watched companies' roles pin to the top of Openings and Best matches and carry a ★ badge.</div>
+          </div></div>
+        <div class="card"><div class="card-head"><h2>Blocklist <span id="block-n"></span></h2></div>
+          <div class="card-body">
+            <form class="cform" id="block-form"><input placeholder="Company or agency name" required><button class="mbtn" type="submit">✕ Block</button></form>
+            <div class="clist" id="block-list"></div>
+            <div class="note">Blocked companies disappear from every list, count and digest. Handy for staffing agencies that repost the same role.</div>
+          </div></div>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<div class="tip" id="tip"></div>
+<input type="file" id="resume-file" accept=".pdf,.docx,.txt,.md" hidden>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const LEVELS=["C-level","VP","Head","Director","Senior Manager","Manager","Lead","Senior Analyst","Analyst","Other"];
+const PIPE=["saved","applied","interviewing","offer","rejected"];
+const PIPE_LABEL={saved:"Saved",applied:"Applied",interviewing:"Interviewing",offer:"Offer",rejected:"Rejected"};
+let nextRunAt=null,lastRunStart=null,total=0,levels=new Set(),cats=new Set(),secs=new Set(),statusV="active",tab="openings";
+let page=1,perPage=8,hasResume=false,hasLLM=false,lastLevelCounts=null,companies=[],users=[],me=null,catMeta=[],secMeta=[],countryLabels={};
+const secLabel=k=>(secMeta.find(s=>s.key===k)||{label:k}).label;
+const cookie=n=>(document.cookie.match(new RegExp("(?:^|; )"+n+"=([^;]*)"))||[])[1]||"";
+let UID=parseInt(cookie("jr_user"))||1;
+const store=(k,v)=>{try{localStorage.setItem(`jobradar.u${UID}.`+k,JSON.stringify(v))}catch{}};
+const load=(k,d)=>{try{const v=localStorage.getItem(`jobradar.u${UID}.`+k);return v==null?d:JSON.parse(v)}catch{return d}};
+try{perPage=parseInt(load("perPage",8))||8}catch{}
+
+/* ── helpers ──────────────────────────────── */
+function fmtAgo(iso){if(!iso)return"";const s=(Date.now()-new Date(iso))/1e3;
+  if(s<3600)return Math.max(1,Math.round(s/60))+" min ago";if(s<86400)return Math.round(s/3600)+" h ago";return Math.round(s/86400)+" d ago"}
+function days(iso){return iso?Math.max(0,Math.round((Date.now()-new Date(iso))/864e5)):0}
+function money(n,cur){const sym=cur&&cur!=="USD"?cur+" ":"$";return n>=1000?sym+Math.round(n/1000)+"k":sym+Math.round(n)}
+function salaryHTML(j){
+  if(!j.salary_min&&!j.salary_max)return'<span class="salary none">salary not listed</span>';
+  const parts=[j.salary_min,j.salary_max].filter(Boolean);
+  const rng=parts.length===2&&Math.round(parts[0])===Math.round(parts[1])?[parts[0]]:parts;
+  const iv=(j.salary_interval||"yearly").toLowerCase();const suf={hourly:"/hr",daily:"/day",weekly:"/wk",monthly:"/mo"}[iv]||"";
+  let s=rng.map(n=>money(n,j.currency)).join("–")+suf;
+  let note=j.salary_source==="description"?" <small>from description</small>":"";
+  if(iv!=="yearly"&&j.salary_annual)note+=` <small>≈ ${money(j.salary_annual,j.currency)}/yr</small>`;
+  return`<span class="salary">${s}${note}</span>`}
+function matchHTML(j){if(j.match_score==null)return"";const p=j.match_score;
+  return`<span class="match ${p>=70?"strong":p<40?"weak":""}" title="resume match"><span class="ring" style="--p:${p}"><span>${p}</span></span></span>`}
+function toast(msg){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),1800)}
+function md(s){ // tiny, safe Markdown: headings, bold, italics, bullets, paragraphs
+  const lines=esc(s).split(/\r?\n/);let out="",inList=false;
+  const inline=t=>t.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/(^|\W)\*(?!\s)(.+?)\*(?=\W|$)/g,"$1<i>$2</i>").replace(/_(.+?)_/g,"<i>$1</i>");
+  for(const raw of lines){const l=raw.trim();
+    if(/^[-*•]\s+/.test(l)){if(!inList){out+="<ul>";inList=true}out+="<li>"+inline(l.replace(/^[-*•]\s+/,""))+"</li>";continue}
+    if(inList){out+="</ul>";inList=false}
+    if(!l)continue;const h=l.match(/^(#{1,4})\s+(.*)/);
+    out+=h?`<h${Math.min(4,h[1].length+2)}>${inline(h[2])}</h${Math.min(4,h[1].length+2)}>`:`<p>${inline(l)}</p>`}
+  if(inList)out+="</ul>";return out}
+async function api(path,opt){const r=await fetch(path,opt);if(!r.ok){let m="request failed";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
+const patch=(id,body)=>api("/api/jobs/"+id,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+
+/* ── filters ──────────────────────────────── */
+const FILTER_IDS=["f-q","f-site","f-term","f-since","f-minsal","f-country","f-sort","f-match","f-stale","f-new","f-remote","f-easy","f-salary","f-travel"];
+function params(){
+  const p=new URLSearchParams({q:$("f-q").value.trim(),site:$("f-site").value,term:$("f-term").value,since_hours:$("f-since").value,
+    min_salary:$("f-minsal").value,country:$("f-country").value,sort:tab==="matches"?"match":$("f-sort").value,
+    min_match:tab==="matches"?Math.max(50,+$("f-match").value):$("f-match").value,stale:$("f-stale").value,
+    new_only:$("f-new").checked,remote:$("f-remote").checked,easy_apply:$("f-easy").checked,has_salary:$("f-salary").checked,no_travel:$("f-travel").checked,
+    level:[...levels].join(","),categories:[...cats].join(","),sector:[...secs].join(","),status:statusV});
+  return p}
+function saveFilters(){const st={};for(const id of FILTER_IDS){const el=$(id);st[id]=el.type==="checkbox"?el.checked:el.value}st.levels=[...levels];st.cats=[...cats];st.secs=[...secs];st.status=statusV;store("filters",st)}
+function loadFilters(){const st=load("filters",null);perPage=parseInt(load("perPage",8))||8;$("f-per").value=String(perPage);
+  if(!st){applyPrefs();return}
+  for(const id of FILTER_IDS){const el=$(id);if(!(id in st))continue;if(el.type==="checkbox")el.checked=!!st[id];else el.value=st[id]}
+  if(!("f-travel" in st))$("f-travel").checked=((me&&me.prefs)||{}).no_travel!==false;
+  levels=new Set(st.levels||[]);cats=new Set(st.cats||[]);secs=new Set(st.secs||[]);statusV=st.status||"active"}
+function applyPrefs(){const p=(me&&me.prefs)||{};cats=new Set(p.categories||[]);secs=new Set(p.sectors||[]);levels=new Set(p.levels||[]);
+  $("f-remote").checked=!!p.remote_only;$("f-travel").checked=p.no_travel!==false;setCountry((p.countries||[]).join(","))}
+function setCountry(v){const sel=$("f-country");sel.value=v;if(sel.value!==v)sel.value=""}
+
+/* dropdown multi-select: button shows the selection, menu holds checkboxes */
+function closeDD(except){for(const d of document.querySelectorAll(".dd.open"))if(d!==except)d.classList.remove("open")}
+document.addEventListener("click",()=>closeDD());
+function ddSummary(box,txt,has){const b=box.querySelector(".dd-btn");b.querySelector("span").textContent=txt;b.classList.toggle("has",!!has)}
+function ddRender(id,{items,selected,all,onChange}){const box=$(id);const open=box.classList.contains("open");
+  const n=selected.size;const txt=n===0?all:n===1?((items.find(i=>i.key===[...selected][0])||{label:[...selected][0]}).label):`${n} selected`;
+  box.innerHTML=`<button type="button" class="dd-btn ${n?"has":""}" aria-haspopup="listbox"><span>${esc(txt)}</span><i>▾</i></button><div class="dd-menu" role="listbox">${items.map(i=>`<label class="dd-item"><input type="checkbox" value="${esc(i.key)}" ${selected.has(i.key)?"checked":""}> <span>${esc(i.label)}</span>${i.count!=null?`<small>${i.count}</small>`:""}</label>`).join("")}${n?'<button type="button" class="dd-clear">Clear selection</button>':""}</div>`;
+  if(open)box.classList.add("open");
+  box.querySelector(".dd-btn").addEventListener("click",e=>{e.stopPropagation();const o=box.classList.contains("open");closeDD(box);box.classList.toggle("open",!o)});
+  box.querySelector(".dd-menu").addEventListener("click",e=>e.stopPropagation());
+  for(const cb of box.querySelectorAll(".dd-item input"))cb.addEventListener("change",()=>{cb.checked?selected.add(cb.value):selected.delete(cb.value);ddRender(id,{items,selected,all,onChange});onChange()});
+  const clr=box.querySelector(".dd-clear");if(clr)clr.addEventListener("click",()=>{selected.clear();ddRender(id,{items,selected,all,onChange});onChange()})}
+function wireOnlyShow(){const box=$("f-only");const b=box.querySelector(".dd-btn");
+  b.addEventListener("click",e=>{e.stopPropagation();const o=box.classList.contains("open");closeDD(box);box.classList.toggle("open",!o)});
+  box.querySelector(".dd-menu").addEventListener("click",e=>e.stopPropagation());
+  for(const cb of box.querySelectorAll("input"))cb.addEventListener("change",renderOnlyShow)}
+function renderOnlyShow(){const on=[...$("f-only").querySelectorAll("input")].filter(c=>c.checked).map(c=>c.parentElement.querySelector("span").textContent);
+  ddSummary($("f-only"),on.length?on.length===1?on[0]:`${on.length} conditions`:"Everything",on.length)}
+function renderCatChips(){
+  ddRender("f-cat",{items:catMeta.map(c=>({key:c.key,label:c.label,count:c.count})),selected:cats,all:"All categories",onChange:()=>{reload();loadStatus();renderCatChips()}});
+  ddRender("f-sector",{items:secMeta.filter(s=>s.key!=="other"||s.count||secs.has("other")).map(s=>({key:s.key,label:s.label,count:s.count})),selected:secs,all:"All sectors",onChange:()=>{reload();renderCatChips()}});
+  renderOnlyShow();
+  const p=(me&&me.prefs)||{};const sameSet=(a,b)=>[...a].sort().join()==[...(b||[])].sort().join();
+  const same=sameSet(cats,p.categories)&&sameSet(levels,p.levels)&&sameSet(secs,p.sectors)&&$("f-country").value===(p.countries||[]).join(",")&&$("f-travel").checked===(p.no_travel!==false)&&$("f-remote").checked===!!p.remote_only;
+  $("pref-note").textContent=(cats.size?"":"All categories")+(secs.size?"":(cats.size?"All sectors":" · all sectors"));$("pref-save").hidden=same}
+$("pref-save").addEventListener("click",async()=>{const prefs={categories:[...cats],sectors:[...secs],levels:[...levels],remote_only:$("f-remote").checked,no_travel:$("f-travel").checked,countries:$("f-country").value?$("f-country").value.split(","):[]};
+  me=await api("/api/users/"+UID,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({prefs})});toast("Saved as your defaults");renderCatChips()});
+function renderLevelChips(counts){ddRender("f-level",{items:LEVELS.map(l=>({key:l,label:l,count:counts?.[l]||0})),selected:levels,all:"All seniority levels",onChange:()=>{reload();renderCatChips()}})}
+function syncStatusSeg(){$("f-status").value=statusV}
+$("f-status").addEventListener("change",e=>{statusV=e.target.value;reload()});
+$("reset").addEventListener("click",()=>{
+  for(const id of FILTER_IDS){const el=$(id);if(el.type==="checkbox")el.checked=false;else el.value=el.querySelector("option")?el.querySelector("option").value:""}
+  $("f-sort").value="newest";statusV="active";applyPrefs();syncStatusSeg();renderLevelChips(lastLevelCounts);renderCatChips();reload();loadStatus()});
+wireOnlyShow();
+
+/* ── users ────────────────────────────────── */
+async function loadUsers(){const d=await api("/api/users");users=d.users;UID=d.current;me=users.find(u=>u.id===UID)||users[0];
+  const sel=$("user-sel");sel.innerHTML=users.map(u=>`<option value="${u.id}" ${u.id===UID?"selected":""}>${esc((u.prefs.emoji||"")+" "+u.name)}</option>`).join("");
+  document.title=`JobRadar · ${me.name}`}
+function switchUser(id){document.cookie=`jr_user=${id}; path=/; max-age=31536000; SameSite=Lax`;location.reload()}
+$("user-sel").addEventListener("change",e=>switchUser(+e.target.value));
+$("user-add").addEventListener("click",async()=>{const name=prompt("Name of the new person using JobRadar:");if(!name||!name.trim())return;
+  const emojis=["🟢","🔵","🟣","🟠","🟡","🔴","⚪","🟤"];const u=await api("/api/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name.trim(),prefs:{emoji:emojis[users.length%emojis.length]}})});switchUser(u.id)});
+$("user-edit").addEventListener("click",async()=>{const name=prompt(`Rename "${me.name}" (leave empty to keep; type DELETE to remove this person and their data):`,me.name);if(name==null)return;
+  if(name.trim()==="DELETE"){if(users.length<2||UID===1){toast("The first person can't be removed");return}if(!confirm(`Remove ${me.name} and all their saved roles, notes, resume and settings?`))return;await api("/api/users/"+UID,{method:"DELETE"});switchUser(1);return}
+  if(name.trim()&&name.trim()!==me.name){await api("/api/users/"+UID,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name.trim()})});loadUsers();toast("Renamed")}});
+
+/* ── status band ──────────────────────────── */
+async function loadStatus(){
+  const s=await api("/api/status?categories="+encodeURIComponent([...cats].join(",")));
+  $("stat-new").textContent=$("mini-new").textContent=s.new_last_24h;
+  $("stat-total").textContent=$("mini-total").textContent=s.total_jobs.toLocaleString();
+  $("stat-match").textContent=s.resume?s.strong_matches.toLocaleString():"–";
+  $("stat-easy").textContent=s.easy_apply.toLocaleString();$("stat-salary").textContent=s.with_salary.toLocaleString();
+  $("stat-saved").textContent=s.saved;$("stat-applied").textContent=s.applied;
+  const pn=Object.values(s.pipeline||{}).reduce((a,b)=>a+b,0);$("tab-pipe-n").textContent=pn?pn:"";
+  nextRunAt=s.next_run?new Date(s.next_run):null;lastRunStart=s.last_run?new Date(s.last_run.started):null;
+  $("live").hidden=!s.refreshing;$("refresh").disabled=s.refreshing;hasResume=!!s.resume;hasLLM=!!s.llm;
+  lastLevelCounts=Object.fromEntries((s.by_level||[]).map(x=>[x.level,x.c]));renderLevelChips(lastLevelCounts);
+  const lr=s.last_run,cfg=s.config||{};
+  const sites=(s.by_site||[]).map(x=>`${esc(siteLabel(x.site))} <b>${x.c}</b>`).join(" · ");
+  let html=lr?`Last sweep <b>${fmtAgo(lr.finished)}</b> · ${lr.scraped} scanned, <b>${lr.new_jobs}</b> new`:"No completed sweep yet";
+  if(lr&&lr.errors){const n=lr.errors.split("; ").length;html+=` · <span class="err" id="err-toggle">⚠ ${n} board error${n>1?"s":""}</span>`}
+  html+=`<span>${cfg.searches||0} searches × ${(cfg.sites||[]).length} boards every ${cfg.refresh_minutes} min</span><span>${sites}</span>`;
+  html+=`<span><b>${esc(s.user?s.user.name:"")}</b>: ${s.resume?"resume loaded":"no resume yet"} · ${cats.size?[...cats].map(k=>esc((catMeta.find(c=>c.key===k)||{label:k}).label)).join(", "):"all categories"}${secs.size?" · "+[...secs].map(k=>esc(secLabel(k))).join(", "):""} · ${s.llm?"Claude ready":"Claude off (no API key)"} · digest ${esc(cfg.digest_time)}${s.stale?` · <b>${s.stale}</b> likely filled`:""}</span>`;
+  if(lr&&lr.errors)html+=`<div class="err-detail" id="err-detail">${esc(lr.errors.replaceAll("; ","\n"))}</div>`;
+  $("subband").innerHTML=html;$("err-toggle")?.addEventListener("click",()=>$("err-detail").classList.toggle("open"));
+  return s}
+function tick(){if(!nextRunAt){$("stat-next").textContent=$("mini-next").textContent="–";return}
+  const d=Math.max(0,(nextRunAt-Date.now())/1e3);const m=String(Math.floor(d/60)).padStart(2,"0"),s=String(Math.floor(d%60)).padStart(2,"0");
+  $("stat-next").textContent=$("mini-next").textContent=m+":"+s}
+
+/* ── rows ─────────────────────────────────── */
+function rowHTML(j){
+  const isNew=lastRunStart&&new Date(j.first_seen)>=lastRunStart,st=j.status||"";
+  const why=(()=>{try{return JSON.parse(j.match_why||"null")}catch{return null}})();
+  const badges=[isNew?'<span class="badge new">New</span>':"",
+    j.watched?'<span class="badge watch">★ Watched</span>':"",
+    j.easy_apply===1?'<span class="badge easy" title="Apply on the board in one step">Easy apply</span>':"",
+    j.level&&j.level!=="Other"?`<span class="badge level">${esc(j.level)}</span>`:"",
+    j.is_remote?'<span class="badge remote">Remote</span>':"",
+    j.travel?`<span class="badge travel" title="The posting asks for travel">✈ Travel${j.travel>1?" "+j.travel+"%":""}</span>`:"",
+    j.stale?'<span class="badge stale" title="Not returned by the boards for several sweeps">Likely filled</span>':"",
+    PIPE.includes(st)?`<span class="badge st ${st}">${st==="saved"?"★ ":st==="applied"?"✓ ":""}${PIPE_LABEL[st]}</span>`:st==="archived"?'<span class="badge stale">Archived</span>':""].join("");
+  const flag=j.country&&j.country!=="Other"?`<span class="flag">${esc(j.country)}</span>`:"";
+  const sector=j.sector&&j.sector!=="other"?`<span class="sector" data-act="sector" title="Filter to this sector">${esc(secLabel(j.sector))}</span>`:"";
+  const facts=[j.job_type?["Type",j.job_type]:null,j.job_level?["Board level",j.job_level]:null,j.job_function?["Function",j.job_function]:null,
+    j.company_industry?["Industry",j.company_industry]:null,j.sector?["Sector",secLabel(j.sector)]:null,
+    j.travel!=null?["Travel",j.travel===0?"None mentioned":j.travel>1?`Required, about ${j.travel}%`:"Required"]:null,
+    j.country&&countryLabels[j.country]?["Country",countryLabels[j.country]]:null,j.search_term?["Matched search",j.search_term]:null,
+    j.easy_apply===0?["Apply","External application (ATS)"]:j.easy_apply===1?["Apply","On the board (Easy apply)"]:null,
+    j.stale?["Last seen on boards",fmtAgo(j.last_seen)]:null]
+    .filter(Boolean).map(([k,v])=>`<div>${esc(k)}<b>${esc(v)}</b></div>`).join("");
+  const whyHTML=why?`<div>Why it matched<div class="why">${(why.skills||[]).map(s=>`<span>${esc(s)}</span>`).join("")}${(why.gaps||[]).map(s=>`<span class="gap" title="in the posting, not in your resume">${esc(s)}</span>`).join("")}${!(why.skills||[]).length?'<span class="gap">little overlap</span>':""}</div></div>`:"";
+  const stageOpts=['<option value="">— stage —</option>',...PIPE.map(s=>`<option value="${s}" ${st===s?"selected":""}>${PIPE_LABEL[s]}</option>`)].join("");
+  const llmHTML=hasResume?`<div class="llm">
+      <div class="bar">${hasLLM?`<button class="mbtn" data-act="tailor" title="What the posting wants that your resume under-sells, with ready-to-paste fixes">🎯 Tailor resume</button><button class="mbtn" data-act="draft" title="Full resume rewritten for this posting, using only what's in your resume">📄 Draft tailored resume</button><button class="mbtn" data-act="fit">✨ Fit summary</button><button class="mbtn" data-act="letter">✍ Cover letter</button>`:`<span>Set ANTHROPIC_API_KEY to enable resume tailoring, fit summaries and cover-letter drafts.</span>`}
+        ${j.cover_letter?'<button class="mbtn" data-act="copy">Copy letter</button>':""}<span class="llm-status"></span></div>
+      <div class="tailor-box">${tailorHTML(j)}</div>
+      <div class="draft-box">${j.resume_tailored?`<div class="bar"><b>ATS-optimised resume draft</b><a class="mbtn" href="/api/jobs/${esc(j.id)}/resume.docx" download>⬇ Download Word (.docx)</a><button class="mbtn" data-act="copydraft">Copy text</button><a class="mbtn" href="/api/jobs/${esc(j.id)}/resume.md" download>.md</a><button class="mbtn" data-act="atscheck">🔍 ATS keyword check</button><button class="mbtn" data-act="refine" title="Re-draft, working in the target keywords the last draft missed">♻ Refine for missing keywords</button><span style="color:var(--dim)">Review every [confirm] marker before sending.</span></div><div class="ats-box">${atsHTML(j._ats)}</div><div class="md letter">${esc(j.resume_tailored)}</div>`:""}</div>
+      <div class="fit-box">${j.fit_summary?`<div class="md">${md(j.fit_summary)}</div>`:""}</div>
+      <div class="letter-box">${j.cover_letter?`<div class="bar"><b>Cover letter</b><a class="mbtn" href="/api/jobs/${esc(j.id)}/cover_letter.docx" download>⬇ Download Word (.docx)</a></div><div class="md letter">${esc(j.cover_letter)}</div>`:""}</div></div>`:"";
+  return`
+    <div>
+      <div class="title"><a href="${esc(j.url||"#")}" target="_blank" rel="noopener">${esc(j.title)}</a>${badges}</div>
+      <div class="meta"><b>${esc(j.company||"Unknown company")}</b>${j.location?`<span>· ${esc(j.location)}</span>`:""}${flag}${sector}</div>
+    </div>
+    <div class="side">${matchHTML(j)}${salaryHTML(j)}<span class="site">${esc(siteLabel(j.site))}</span>
+      <span title="${esc(j.first_seen)}">on radar ${fmtAgo(j.first_seen)}</span>${j.date_posted?`<span>posted ${esc(j.date_posted)}</span>`:""}</div>
+    <div class="acts">
+      <button class="save ${st==="saved"?"on":""}" data-act="saved">★ Save</button>
+      <button class="applied ${st==="applied"?"on":""}" data-act="applied">✓ Applied</button>
+      <select class="stage" data-act="stage">${stageOpts}</select>
+      <button class="hide ${st==="hidden"?"on":""}" data-act="hidden">✕ Hide</button>
+      <button data-act="watch" title="Pin this company's roles to the top">${j.watched?"★ Unwatch":"☆ Watch co."}</button>
+      <button data-act="block" title="Hide every role from this company">⊘ Block co.</button>
+      ${["greenhouse","lever","ashby","smartrecruiters","workable"].includes(j.site)&&!j.apply_state?`<button data-act="queue" title="Add to the application queue">➕ Queue to apply</button>`:j.apply_state?`<span class="state ${esc(j.apply_state)}" style="align-self:center">${esc(j.apply_state.replace("_"," "))}</span>`:""}
+      <a class="abtn" href="${esc(j.url||"#")}" target="_blank" rel="noopener">Open on ${esc(siteLabel(j.site)||"board")} ↗</a>
+      ${j.url_direct&&j.url_direct!==j.url?`<a class="abtn direct" href="${esc(j.url_direct)}" target="_blank" rel="noopener">Apply at employer ↗</a>`:""}
+      <button class="more" data-act="toggle">Details ▾</button>
+    </div>
+    <div class="detail">
+      <div class="desc">${j.description?esc(j.description):"No description captured for this posting."}</div>
+      <div class="facts">${whyHTML}${facts}
+        <div>Notes<textarea placeholder="Recruiter name, follow-up date…">${esc(j.notes||"")}</textarea><div class="saved-note"></div></div>
+      </div>
+      ${llmHTML}
+    </div>`}
+function atsHTML(a){
+  if(!a||!a.draft)return"";const d=a.draft,o=a.original;const chip=(k,cls)=>`<span class="${cls}">${esc(k)}${d.counts&&d.counts[k]>1?` ×${d.counts[k]}`:""}</span>`;
+  const checks=[["has_summary","Professional Summary"],["has_competencies","Core Competencies"],["has_experience","Experience section"],["has_education","Education"],["no_tables","No tables/columns"],["no_confirm_markers","No [confirm] markers left"]];
+  return`<div class="tailor" style="margin-bottom:.6rem">
+    <div class="verdict"><span class="badge ${d.score>=80?"Strong":d.score>=60?"Good":"Stretch"}">ATS keywords ${d.score}%</span>
+      <span>${d.present.length} of ${d.total} target phrases present${o?` (your original resume: ${o.score}%)`:""}${d.stuffed.length?` · <b style="color:var(--danger)">over-used: ${esc(d.stuffed.join(", "))}</b>`:""}</span></div>
+    ${d.missing.length?`<div><h4>Missing from the draft</h4><div class="kw">${d.missing.map(k=>chip(k,"gap")).join("")}</div><small style="color:var(--dim)">Press "Refine" to work these in where your resume supports them; the model leaves out anything it can't claim.</small></div>`:'<div><h4>All target phrases covered</h4></div>'}
+    <div><h4>Present</h4><div class="kw">${d.present.map(k=>chip(k,"")).join("")}</div></div>
+    <div><h4>Structure</h4><div class="kw">${checks.map(([k,l])=>`<span class="${d.checks[k]?"":"gap"}">${d.checks[k]?"✓":"✗"} ${l}</span>`).join("")}</div></div>
+  </div>`}
+function tailorHTML(j){
+  let t;try{t=typeof j.tailoring==="string"?JSON.parse(j.tailoring):j.tailoring}catch{return""}
+  if(!t)return"";const li=a=>(a||[]).map(x=>`<li>${esc(x)}</li>`).join("");
+  return`<div class="tailor">
+    <div class="verdict"><span class="badge ${esc(t.verdict)}">${esc(t.verdict)} fit</span><span>${esc(t.headline)}</span></div>
+    ${t.match_reasons?.length?`<div><h4>Why you're a fit</h4><ul>${li(t.match_reasons)}</ul></div>`:""}
+    ${t.missing?.length?`<div><h4>What's missing or under-sold</h4><div style="display:grid;gap:.35rem">${t.missing.map(m=>`<div class="gap"><span class="imp ${esc(m.importance)}">${esc(m.importance)}</span><div><b>${esc(m.item)}</b><small>Posting: <em>“${esc(m.evidence)}”</em></small><small>Fix: ${esc(m.suggestion)}</small></div></div>`).join("")}</div></div>`:""}
+    ${t.keywords_to_add?.length?`<div><h4>Phrases to mirror (only where true)</h4><div class="kw">${t.keywords_to_add.map(k=>`<span>${esc(k)}</span>`).join("")}</div></div>`:""}
+    ${t.emphasize?.length?`<div><h4>Move up or expand</h4><ul>${li(t.emphasize)}</ul></div>`:""}
+    ${t.bullet_rewrites?.length?`<div><h4>Bullet rewrites</h4><div style="display:grid;gap:.35rem">${t.bullet_rewrites.map(r=>`<div class="rw"><span class="o">${esc(r.original)}</span><span class="n">${esc(r.rewritten)}</span><small>${esc(r.why)}</small></div>`).join("")}</div></div>`:""}
+    ${t.summary?`<div><h4>Tailored summary <button class="mbtn" data-act="copysum" style="margin-left:.4rem">Copy</button></h4><div class="sum">${esc(t.summary)}</div></div>`:""}
+    ${t.confirm?.length?`<div><h4>Confirm and add if true</h4><ul>${li(t.confirm)}</ul></div>`:""}
+    ${t.interview_probes?.length?`<div><h4>Expect to be asked</h4><ul>${li(t.interview_probes)}</ul></div>`:""}
+  </div>`}
+function rowClass(row,j){const open=row.classList.contains("open"),isNew=row.classList.contains("new");
+  row.className="row"+(isNew?" new":"")+(j.status?" "+(j.status==="hidden"?"hidden-status":j.status):"")+(j.stale?" stale":"")+(open?" open":"")}
+function makeRow(j){
+  const row=document.createElement("article");row.classList.toggle("new",!!(lastRunStart&&new Date(j.first_seen)>=lastRunStart));
+  row.dataset.id=j.id;row._job=j;row.innerHTML=rowHTML(j);rowClass(row,j);
+  row.addEventListener("click",e=>{
+    const b=e.target.closest("button");
+    if(b&&b.dataset.act==="toggle"){row.classList.toggle("open");b.textContent=row.classList.contains("open")?"Hide details ▴":"Details ▾";return}
+    if(b&&["saved","applied","hidden"].includes(b.dataset.act)){setStatus(row,b.dataset.act);return}
+    if(b&&b.dataset.act==="queue"){(async()=>{await api("/api/apply/"+row._job.id+"/state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:"queued",note:"queued from Openings"})});row._job.apply_state="queued";rerender(row);toast("Queued — open the Apply tab to prepare it")})();return}
+    if(b&&b.dataset.act==="watch"){setCompany(row,"watch");return}
+    if(b&&b.dataset.act==="block"){setCompany(row,"block");return}
+    if(b&&["fit","letter","tailor","draft","refine"].includes(b.dataset.act)){runLLM(row,b.dataset.act);return}
+    if(b&&b.dataset.act==="atscheck"){(async()=>{const st=row.querySelector(".llm-status");st.textContent="Checking keywords…";
+      try{row._job._ats=await api(`/api/jobs/${row._job.id}/ats_check`);st.textContent="";rerender(row)}catch(e){st.textContent="⚠ "+e.message}})();return}
+    if(b&&b.dataset.act==="copy"){navigator.clipboard.writeText(row._job.cover_letter||"").then(()=>toast("Letter copied"));return}
+    if(b&&b.dataset.act==="copydraft"){navigator.clipboard.writeText(row._job.resume_tailored||"").then(()=>toast("Resume draft copied"));return}
+    if(b&&b.dataset.act==="copysum"){let t={};try{t=JSON.parse(row._job.tailoring||"{}")}catch{}navigator.clipboard.writeText(t.summary||"").then(()=>toast("Summary copied"));return}
+    const sc=e.target.closest("span.sector[data-act]");
+    if(sc&&row._job.sector){secs=new Set([row._job.sector]);renderCatChips();reload();toast("Showing "+secLabel(row._job.sector));return}
+    if(e.target.closest("a,textarea,select,.detail"))return;
+    row.classList.toggle("open")});
+  row.addEventListener("change",e=>{if(e.target.classList.contains("stage"))setStatus(row,e.target.value,true)});
+  wireNotes(row);return row}
+function wireNotes(row){const ta=row.querySelector("textarea");if(!ta)return;let t;
+  ta.addEventListener("input",()=>{clearTimeout(t);t=setTimeout(()=>saveNotes(row,ta.value),600)})}
+function rerender(row){const open=row.classList.contains("open");row.innerHTML=rowHTML(row._job);rowClass(row,row._job);if(open){row.classList.add("open");row.querySelector(".more").textContent="Hide details ▴"}wireNotes(row)}
+async function setStatus(row,act,explicit=false){
+  const j=row._job;const next=(!explicit&&j.status===act)?"":act;
+  try{Object.assign(j,await patch(j.id,{status:next}));
+    const leaves=(statusV==="active"&&["hidden","archived"].includes(next))||(statusV==="pipeline"&&!PIPE.includes(next))||(["hidden","archived"].includes(statusV)&&next!==statusV);
+    if(leaves){row.remove();total--;$("count").textContent=total.toLocaleString()+" match";if(!$("rows").querySelector(".row"))loadJobs();else renderPagers()}
+    else rerender(row);
+    toast(next?({saved:"Saved ★",applied:"Marked applied ✓",hidden:"Hidden",interviewing:"Interviewing",offer:"Offer 🎉",rejected:"Rejected"}[next]||next):"Cleared");loadStatus()}
+  catch(e){toast("Could not save — "+e.message)}}
+async function saveNotes(row,text){const j=row._job;
+  try{Object.assign(j,await patch(j.id,{status:j.status||"",notes:text}));const n=row.querySelector(".saved-note");n.textContent="saved";setTimeout(()=>n.textContent="",1200)}
+  catch(e){toast("Could not save notes")}}
+async function setCompany(row,flag){const j=row._job;const name=j.company;if(!name)return;
+  try{
+    if(flag==="watch"&&j.watched){await api("/api/companies/"+encodeURIComponent(normCo(name)),{method:"DELETE"});j.watched=0;toast("Unwatched "+name);rerender(row)}
+    else{await api("/api/companies",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name,flag})});
+      if(flag==="block"){toast("Blocked "+name);loadJobs()}else{j.watched=1;toast("Watching "+name);rerender(row)}}
+    loadStatus()}catch(e){toast("Could not update company — "+e.message)}}
+const normCo=n=>n.replace(/,/g,"").replace(/\./g,"").replace(/  /g," ").trim().toLowerCase();
+const LLM_ACT={fit:["fit","Asking Claude for a fit summary…","Fit summary ready"],letter:["cover_letter","Drafting cover letter…","Cover letter drafted"],
+  tailor:["tailor","Analysing the posting against your resume… (30–60 s)","Tailoring ready"],draft:["tailored_resume","Writing an ATS-optimised resume for this posting… (1–2 min)","Tailored resume drafted"],
+  refine:["tailored_resume","Re-drafting to cover the missing keywords… (1–2 min)","Refined draft ready"]};
+async function runLLM(row,kind){const j=row._job;const status=row.querySelector(".llm-status");const[path,busy,done]=LLM_ACT[kind];
+  status.innerHTML='<span class="pulse"></span>'+esc(busy);for(const b of row.querySelectorAll(".llm .bar button"))b.disabled=true;
+  try{const r=await api(`/api/jobs/${j.id}/${path}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({notes:j.notes||"",refine:kind==="refine"})});
+    if(r.tailoring)r.tailoring=JSON.stringify(r.tailoring);if(r.ats){j._ats=r.ats;delete r.ats}Object.assign(j,r);status.textContent="";rerender(row);toast(done)}
+  catch(e){status.textContent="⚠ "+e.message;for(const b of row.querySelectorAll(".llm .bar button"))b.disabled=false}}
+
+/* ── paging ───────────────────────────────── */
+const pages=()=>Math.max(1,Math.ceil(total/perPage));
+function pagerHTML(){const n=pages(),cur=page;const b=(label,to,extra="")=>`<button data-page="${to}" ${extra}>${label}</button>`;
+  let nums=new Set([1,n,cur-1,cur,cur+1]);if(cur<=3)[2,3,4].forEach(x=>nums.add(x));if(cur>=n-2)[n-1,n-2,n-3].forEach(x=>nums.add(x));
+  const list=[...nums].filter(x=>x>=1&&x<=n).sort((a,c)=>a-c);let html=b("«",1,cur===1?"disabled":"")+b("‹",cur-1,cur===1?"disabled":""),prev=0;
+  for(const x of list){if(x-prev>1)html+='<span class="gap">…</span>';html+=b(x,x,x===cur?'class="on"':"");prev=x}
+  html+=b("›",cur+1,cur===n?"disabled":"")+b("»",n,cur===n?"disabled":"");const from=total?(cur-1)*perPage+1:0,to=Math.min(total,cur*perPage);
+  return html+`<span class="info">${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}</span>`}
+function renderPagers(){const html=total>perPage?pagerHTML():"";$("pager-top").innerHTML=html;$("pager-bottom").innerHTML=html;$("pager-bottom-wrap").hidden=total===0}
+function goto(n,scroll=true){n=Math.min(Math.max(1,n),pages());if(n===page)return;page=n;loadJobs().then(()=>{if(scroll){
+  const y=$("view-list").getBoundingClientRect().top+window.scrollY-topH()-12;window.scrollTo({top:Math.max(0,y),behavior:"smooth"})}})}
+for(const id of["pager-top","pager-bottom"])$(id).addEventListener("click",e=>{const b=e.target.closest("button[data-page]");if(b&&!b.disabled)goto(+b.dataset.page)});
+$("f-per").addEventListener("change",()=>{perPage=+$("f-per").value;store("perPage",perPage);page=1;loadJobs()});
+document.addEventListener("keydown",e=>{if(/input|textarea|select/i.test(e.target.tagName)||e.altKey||e.ctrlKey||e.metaKey)return;
+  if(e.key==="ArrowRight")goto(page+1);else if(e.key==="ArrowLeft")goto(page-1);
+  else if(e.key==="/"){e.preventDefault();$("f-q").focus();$("f-q").select()}});
+
+async function loadJobs(){
+  if(page>pages())page=pages();const p=params();p.set("limit",perPage);p.set("offset",(page-1)*perPage);
+  $("export").href="/api/jobs.csv?"+params();
+  const data=await api("/api/jobs?"+p);total=data.total;const jobs=data.jobs;
+  if(!jobs.length&&page>1){page=pages();return loadJobs()}
+  $("count").textContent=total.toLocaleString()+" match";const box=$("rows");box.innerHTML="";
+  if(!jobs.length){const msg=tab==="matches"&&!hasResume?"Upload your resume above to rank roles by fit.":statusV==="active"?"The next sweep may bring more, or widen the filters on the left.":"Nothing in this bucket yet — use ★ Save / ✓ Applied / ✕ Hide on a row.";
+    box.innerHTML=`<div class="empty"><b>Nothing matches these filters</b>${msg}</div>`}
+  for(const j of jobs)box.appendChild(makeRow(j));renderPagers();saveFilters()}
+const reload=()=>{page=1;return loadJobs()};
+
+/* ── resume card ──────────────────────────── */
+async function loadResume(){
+  const r=await api("/api/resume");hasResume=!!r.present;const c=$("resume-card");c.hidden=tab!=="matches";
+  if(!r.present){c.innerHTML=`<div class="card-head"><h2>${esc(me?me.name+"'s":"Your")} resume</h2></div><div class="card-body">
+      <div class="drop" id="drop"><b>Drop your resume here</b> or click to choose · PDF, DOCX or TXT<br><small>Scored locally against every role. The file never leaves this machine unless you use the Claude buttons.</small></div>
+      <div class="resume-meta">Once uploaded, every opening gets a 0–100 match score, a "why it matched" list, and a Best-match sort. The daily digest then ranks new roles by fit.</div></div>`}
+  else{c.innerHTML=`<div class="card-head"><h2>${esc(me?me.name+"'s":"Your")} resume <span>${esc(r.name)} · ${r.words} words · uploaded ${fmtAgo(r.uploaded_at)}</span></h2>
+      <div class="resume-actions"><button class="mbtn" id="resume-replace">Replace</button><button class="mbtn" id="resume-remove">Remove</button></div></div>
+      <div class="card-body"><div><div class="resume-meta">Reads as <b>${esc((r.levels||[]).join(" / ")||"—")}</b>. ${r.scoring?'<span class="pulse"></span>Scoring every role against it in the background (a few minutes) — match scores and skills appear when it finishes.':"Skills the market also asks for:"}</div>
+      <div class="why" style="margin-top:.4rem">${(r.skills||[]).map(s=>`<span>${esc(s)}</span>`).join("")}</div></div>
+      <div class="drop" id="drop" style="min-width:16rem"><b>Drop a new version</b> to re-score</div></div>`;
+    $("resume-remove").addEventListener("click",async()=>{if(!confirm("Remove the resume and clear all match scores?"))return;await api("/api/resume",{method:"DELETE"});toast("Resume removed");await loadResume();loadStatus();reload()});
+    $("resume-replace").addEventListener("click",()=>$("resume-file").click())}
+  const d=$("drop");d.addEventListener("click",()=>$("resume-file").click());
+  d.addEventListener("dragover",e=>{e.preventDefault();d.classList.add("over")});d.addEventListener("dragleave",()=>d.classList.remove("over"));
+  d.addEventListener("drop",e=>{e.preventDefault();d.classList.remove("over");if(e.dataTransfer.files[0])uploadResume(e.dataTransfer.files[0])})}
+$("resume-file").addEventListener("change",e=>{if(e.target.files[0])uploadResume(e.target.files[0]);e.target.value=""});
+async function uploadResume(file){const fd=new FormData();fd.append("file",file);toast("Reading "+file.name+"…");
+  try{const r=await api("/api/resume",{method:"POST",body:fd});toast(r.scored==null?`Resume saved — scoring ${(r.queued||0).toLocaleString()} roles in the background`:`Scored ${r.scored.toLocaleString()} roles against your resume`);await loadResume();loadStatus();reload()}
+  catch(e){toast("Upload failed — "+e.message)}}
+
+/* ── pipeline board ───────────────────────── */
+async function loadPipeline(){
+  const data=await api("/api/pipeline");const board=$("board");board.innerHTML="";let n=0;
+  for(const st of PIPE){const col=document.createElement("div");col.className="col";col.dataset.stage=st;const items=data[st]||[];n+=items.length;
+    col.innerHTML=`<h3>${PIPE_LABEL[st]}<span>${items.length}</span></h3>`;
+    for(const j of items){const k=document.createElement("div");k.className="kcard"+(j.stale?" stale":"");k.draggable=true;k.dataset.id=j.id;
+      const i=PIPE.indexOf(st);
+      k.innerHTML=`<div class="t"><a href="${esc(j.url||"#")}" target="_blank" rel="noopener">${esc(j.title)}</a></div><div class="c">${esc(j.company||"")}${j.location?" · "+esc(j.location):""}</div>
+        <div class="f"><span>${j.match_score!=null?j.match_score+"% match · ":""}${days(j.status_at)} d in stage${j.stale?" · likely filled":""}</span>
+        <span class="mv">${i>0?`<button data-to="${PIPE[i-1]}" title="Move to ${PIPE_LABEL[PIPE[i-1]]}">◀</button>`:""}${i<PIPE.length-1?`<button data-to="${PIPE[i+1]}" title="Move to ${PIPE_LABEL[PIPE[i+1]]}">▶</button>`:""}<button data-to="" title="Remove from pipeline">✕</button></span></div>`;
+      k.addEventListener("dragstart",e=>{e.dataTransfer.setData("text/plain",j.id);k.classList.add("dragging")});k.addEventListener("dragend",()=>k.classList.remove("dragging"));
+      k.addEventListener("click",e=>{const b=e.target.closest("button[data-to]");if(b)move(j.id,b.dataset.to)});col.appendChild(k)}
+    col.addEventListener("dragover",e=>{e.preventDefault();col.classList.add("over")});col.addEventListener("dragleave",()=>col.classList.remove("over"));
+    col.addEventListener("drop",e=>{e.preventDefault();col.classList.remove("over");move(e.dataTransfer.getData("text/plain"),st)});board.appendChild(col)}
+  $("pipe-count").textContent=n+" roles";
+  if(!n)board.innerHTML='<div class="empty" style="grid-column:1/-1"><b>Pipeline is empty</b>Save or mark roles as applied in Openings and they appear here.</div>'}
+async function move(id,to){try{await patch(id,{status:to});toast(to?"Moved to "+PIPE_LABEL[to]:"Removed from pipeline");loadPipeline();loadStatus()}catch(e){toast("Could not move — "+e.message)}}
+
+/* ── insights ─────────────────────────────── */
+const tip=$("tip");
+function showTip(e,html){tip.innerHTML=html;tip.style.display="block";moveTip(e)}
+function moveTip(e){tip.style.left=(e.clientX+14)+"px";tip.style.top=(e.clientY+14)+"px"}
+function hideTip(){tip.style.display="none"}
+function rangeChart(box,rows,labelKey){
+  box.innerHTML="";if(!rows.length){box.innerHTML='<div class="empty">Not enough listed salaries yet.</div>';return}
+  const lo=Math.min(...rows.map(r=>r.min)),hi=Math.max(...rows.map(r=>r.max));const x=v=>((v-lo)/(hi-lo||1)*100).toFixed(1)+"%";
+  for(const r of rows){const d=document.createElement("div");d.className="crow";
+    d.innerHTML=`<div class="lab">${esc(r[labelKey])}</div><div class="track"><div class="whisk" style="left:${x(r.min)};width:calc(${x(r.max)} - ${x(r.min)})"></div>
+      <div class="iqr" style="left:${x(r.p25)};width:max(4px,calc(${x(r.p75)} - ${x(r.p25)}))"></div><div class="med" style="left:${x(r.median)}"></div></div><div class="n">${money(r.median)} · n=${r.n}</div>`;
+    const t=d.querySelector(".track");const html=`<b>${esc(r[labelKey])}</b> · ${r.n} listings<br>median ${money(r.median)} · middle half ${money(r.p25)}–${money(r.p75)}<br>range ${money(r.min)}–${money(r.max)}`;
+    t.addEventListener("mouseenter",e=>showTip(e,html));t.addEventListener("mousemove",moveTip);t.addEventListener("mouseleave",hideTip);box.appendChild(d)}
+  const ax=document.createElement("div");ax.className="axis";ax.innerHTML=`<div></div><div><span>${money(lo)}</span><span>${money((lo+hi)/2)}</span><span>${money(hi)}</span></div><div></div>`;box.appendChild(ax)}
+async function loadInsights(){
+  const d=await api("/api/insights?categories="+encodeURIComponent([...cats].join(",")));
+  rangeChart($("chart-level"),d.salary_by_level,"level");$("sal-n").textContent=d.salary_by_level.reduce((a,r)=>a+r.n,0)+" listed salaries";
+  const h=$("hist");h.innerHTML="";const mx=Math.max(1,...d.match_histogram.map(b=>b.c));
+  if(!d.match_histogram.length)h.innerHTML='<div class="empty" style="flex:1">No resume uploaded.</div>';
+  for(let b=0;b<100;b+=10){const row=d.match_histogram.find(x=>x.bucket===b);const c=row?row.c:0;const bar=document.createElement("div");
+    bar.style.height=(c/mx*100)+"%";bar.innerHTML=`<b>${c||""}</b><i>${b}</i>`;bar.title=`${b}–${b+9}%: ${c} roles`;if(d.match_histogram.length)h.appendChild(bar)}
+  const mxJobs=Math.max(1,...d.terms.map(t=>t.jobs));
+  $("tbl-terms").innerHTML=`<tr><th>Term</th><th class="num">Roles</th><th class="num">New 7d</th><th class="num">Saved</th><th class="num">Applied+</th><th class="num">Avg match</th><th class="num">≥70%</th></tr>`+
+    d.terms.map(t=>`<tr><td>${esc(t.term)}</td><td class="num"><span class="bar" style="width:${(t.jobs/mxJobs*60).toFixed(0)}px"></span>${t.jobs}</td><td class="num">${t.new7}</td><td class="num">${t.saved}</td><td class="num">${t.applied}</td><td class="num">${t.avg_match??"–"}</td><td class="num">${t.strong??"–"}</td></tr>`).join("");
+  const mxSec=Math.max(1,...(d.sectors||[]).map(s=>s.jobs));
+  $("tbl-sectors").innerHTML=`<tr><th>Sector</th><th class="num">Roles</th><th class="num">Employers</th><th class="num">New 7d</th><th class="num">Saved</th><th class="num">Applied+</th><th class="num">Avg match</th><th class="num">≥70%</th></tr>`+
+    ((d.sectors||[]).map(s=>`<tr><td><a href="#" data-sec="${esc(s.sector)}">${esc(secLabel(s.sector))}</a></td><td class="num"><span class="bar" style="width:${(s.jobs/mxSec*60).toFixed(0)}px"></span>${s.jobs}</td><td class="num">${s.employers}</td><td class="num">${s.new7}</td><td class="num">${s.saved}</td><td class="num">${s.applied}</td><td class="num">${s.avg_match??"–"}</td><td class="num">${s.strong??"–"}</td></tr>`).join("")||'<tr><td colspan="8" class="empty">No roles yet.</td></tr>');
+  $("tbl-sectors").onclick=e=>{const a=e.target.closest("a[data-sec]");if(!a)return;e.preventDefault();secs=new Set([a.dataset.sec]);renderCatChips();setTab("openings")};
+  $("tbl-salterm").innerHTML=`<tr><th>Search term</th><th class="num">Listings</th><th class="num">25th</th><th class="num">Median</th><th class="num">75th</th><th class="num">Max</th></tr>`+
+    (d.salary_by_term.map(t=>`<tr><td>${esc(t.term)}</td><td class="num">${t.n}</td><td class="num">${money(t.p25)}</td><td class="num"><b>${money(t.median)}</b></td><td class="num">${money(t.p75)}</td><td class="num">${money(t.max)}</td></tr>`).join("")||'<tr><td colspan="6" class="empty">Not enough listed salaries yet.</td></tr>');
+  const s=d.stale;$("stale-n").textContent=s.count;
+  $("stale-box").innerHTML=s.cutoff?`<p style="font-size:.88rem">${s.count} active role${s.count===1?"":"s"} haven't been returned by any board in the last ${s.after_sweeps} completed sweeps, so they're probably filled or taken down. They show a <span class="badge stale">Likely filled</span> badge in Openings; filter them with "Likely filled" in the sidebar.</p>
+      <p style="margin-top:.7rem"><button class="mbtn" id="archive-stale" ${s.count?"":"disabled"}>Archive ${s.count} stale role${s.count===1?"":"s"}</button> <span class="note" style="display:inline">Saved / applied roles are never archived. Archived roles stay in the Archived bucket.</span></p>`
+    :`<p style="font-size:.88rem">Needs ${s.after_sweeps} completed sweeps before roles can be judged stale (setting <code>stale_after_sweeps</code> in config.yaml).</p>`;
+  $("archive-stale")?.addEventListener("click",async()=>{const r=await api("/api/archive_stale",{method:"POST"});toast(`Archived ${r.archived} roles`);loadInsights();loadStatus()})}
+
+/* ── employer ATS boards ──────────────────── */
+let atsData=null;
+function renderAts(){
+  const d=atsData;if(!d)return;const q=($("ats-q").value||"").trim().toLowerCase();
+  const all=d.boards||[];const on=all.filter(b=>b.enabled).length;const secLabels=d.sectors||{};
+  const boards=all.filter(b=>!q||`${b.company||""} ${b.slug} ${d.providers[b.provider]||b.provider} ${secLabels[b.sector]||""} ${b.source}`.toLowerCase().includes(q));
+  const catalog=all.filter(b=>b.source==="config").length;
+  $("ats-n").textContent=`${on} active · ${all.length} known · ${catalog} from the organizations catalogue${q?` · ${boards.length} shown`:""}`;
+  const secOpts=sel=>`<option value="">— auto —</option>`+Object.entries(secLabels).map(([k,l])=>`<option value="${esc(k)}" ${sel===k?"selected":""}>${esc(l)}</option>`).join("");
+  $("tbl-ats").innerHTML=`<tr><th>Organization</th><th>System</th><th>Sector</th><th>Found by</th><th class="num">Matched</th><th class="num">Stored</th><th>Last checked</th><th>Status</th><th></th></tr>`+
+    (boards.map(b=>`<tr style="${b.enabled?"":"opacity:.5"}"><td><b>${esc(b.company||b.slug)}</b><br><small style="color:var(--dim)">${esc(b.slug)}</small></td><td>${esc(d.providers[b.provider]||b.provider)}${(d.list_only||[]).includes(b.provider)?'<br><small style="color:var(--dim)">titles only</small>':""}</td>
+      <td><select class="secsel" data-sector="${b.id}">${secOpts(b.sector)}</select></td><td>${b.source==="auto"?"stored links":b.source==="config"?"catalogue":b.source}</td>
+      <td class="num">${b.last_count??"–"}</td><td class="num">${b.jobs||0}</td><td>${b.last_checked?fmtAgo(b.last_checked):"never"}</td><td>${b.last_error?`<span class="badge stale" title="${esc(b.last_error)}">⚠ ${esc(b.last_error)}</span>`:b.last_checked?'<span class="badge level">ok</span>':""}</td>
+      <td style="white-space:nowrap"><button class="mbtn" data-toggle="${b.id}" data-on="${b.enabled?1:0}">${b.enabled?"Pause":"Resume"}</button> <button class="mbtn" data-del="${b.id}">Remove</button></td></tr>`).join("")
+    ||`<tr><td colspan="9" class="empty">${q?"No sites match that filter.":'No sites yet. Click "Discover from stored links" or paste a careers URL above.'}</td></tr>`)}
+async function loadAts(){
+  const d=await api("/api/ats");atsData=d;
+  const ss=$("ats-sector");if(ss.options.length<2)ss.innerHTML='<option value="">Sector: detect from name</option>'+Object.entries(d.sectors||{}).map(([k,l])=>`<option value="${esc(k)}">${esc(l)}</option>`).join("");
+  const l=d.last;$("ats-last").innerHTML=d.running?'<span class="pulse"></span>Checking sites…':l?`Last check ${fmtAgo(l.at)}: <b>${l.boards}</b> sites, <b>${l.matched}</b> titles matched your filters, <b>${l.new}</b> new roles stored${l.errors?`, ${l.errors} site error${l.errors>1?"s":""}`:""}.`:"Not checked yet — sites are checked at the start of every sweep.";
+  renderAts();
+  $("tbl-ats").onclick=async e=>{const t=e.target.closest("button[data-toggle]"),x=e.target.closest("button[data-del]");
+    if(t){await api("/api/ats/"+t.dataset.toggle,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:t.dataset.on!=="1"})});loadAts()}
+    if(x){await api("/api/ats/"+x.dataset.del,{method:"DELETE"});toast("Site removed");loadAts()}};
+  $("tbl-ats").onchange=async e=>{const s=e.target.closest("select[data-sector]");if(!s)return;
+    await api("/api/ats/"+s.dataset.sector,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({sector:s.value})});toast(s.value?"Sector set — roles re-tagged":"Sector cleared");loadMeta()}}
+$("ats-q").addEventListener("input",renderAts);
+$("ats-form").addEventListener("submit",async e=>{e.preventDefault();const inp=e.target.querySelector("input");
+  try{const r=await api("/api/ats",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:inp.value,sector:$("ats-sector").value||null})});
+    toast(r.added?`Added ${siteLabel(r.provider)} site ${r.slug}`:"Site already known");inp.value="";loadAts()}catch(err){toast(err.message)}});
+$("ats-discover").addEventListener("click",async()=>{$("ats-discover").disabled=true;try{const r=await api("/api/ats/discover",{method:"POST"});toast(`${r.added} new board${r.added===1?"":"s"} found (${r.resolved} short links resolved)`);loadAts()}finally{$("ats-discover").disabled=false}});
+$("ats-run").addEventListener("click",async()=>{await api("/api/ats/run",{method:"POST"});toast("Checking employer boards…");setTimeout(loadAts,1500);
+  const t=setInterval(async()=>{const d=await api("/api/ats");if(!d.running){clearInterval(t);loadAts();loadStatus();loadMeta()}},5000)});
+
+/* ── apply tab ────────────────────────────── */
+const PF=[["Contact"],["first_name","First name"],["last_name","Last name"],["email","Email"],["phone","Phone"],["city","City"],["state","State / province"],["country","Country"],
+  ["address","Street address"],["postal_code","Postal / ZIP code"],
+  ["linkedin","LinkedIn URL"],["website","Website / portfolio"],["github","GitHub"],["current_company","Current company"],["current_title","Current title"],
+  ["Education"],["degree","Highest degree (as forms word it, e.g. Master's Degree)"],["school","School / university"],["field_of_study","Field of study"],
+  ["Screening answers"],["work_authorized","Authorized to work in the country?",["yes","no"]],["needs_sponsorship","Need visa sponsorship?",["no","yes"]],["relocate","Willing to relocate?",["no","yes"]],["remote_ok","Open to remote?",["yes","no"]],["hybrid_ok","Able to work hybrid / on-site where posted?",["yes","no"]],
+  ["over_18","Over 18?",["yes","no"]],["previously_employed","Previously employed by the company?",["no","yes"]],["sms_consent","Consent to SMS / text messages?",["no","yes"]],["salary_expectation","Salary expectation (text)"],["start_date","Start date / notice"],["how_heard","How did you hear about us"],["pronouns","Pronouns (optional)"],
+  ["Voluntary self-identification (EEO)"],["gender","Gender",["decline","male","female","nonbinary"]],["hispanic","Hispanic or Latino?",["decline","no","yes"]],["race","Race / ethnicity (as worded on forms, or leave 'decline')"],["veteran","Veteran status",["decline","not","yes"]],["disability","Disability status",["decline","no","yes"]]];
+let profile=null,rules=null;
+function renderProfile(p){
+  const box=$("profile-form");let html='<div class="form">';
+  for(const f of PF){if(f.length===1){html+=`<h4>${esc(f[0])}</h4>`;continue}
+    const[k,l,opts]=f;html+=`<label>${esc(l)}${opts?`<select data-k="${k}">${opts.map(o=>`<option value="${o}" ${p[k]===o?"selected":""}>${o==="not"?"not a protected veteran":o}</option>`).join("")}</select>`:`<input data-k="${k}" value="${esc(p[k]||"")}">`}</label>`}
+  html+=`<h4>Custom question answers</h4><div class="wide" style="grid-column:1/-1;font-size:.8rem;color:var(--dim)">When a form question matches the pattern (case-insensitive, regex allowed), the engine uses your answer. Checked before the built-in rules, so use it to override anything.</div><div id="custom-qs" style="grid-column:1/-1;display:grid;gap:.4rem"></div><div style="grid-column:1/-1"><button class="mbtn" id="custom-add" type="button">+ Add answer</button></div></div>
+    <div class="warnbox" style="margin-top:.8rem">Demographic answers are voluntary self-identification; "decline" is always an acceptable answer. Work-authorization and sponsorship answers must be truthful — misstatements can void an offer.</div>`;
+  box.innerHTML=html;const cq=$("custom-qs");
+  const addRow=(m="",a="")=>{const d=document.createElement("div");d.className="custom-q";d.innerHTML=`<input placeholder="question pattern, e.g. security clearance" value="${esc(m)}"><input placeholder="answer, e.g. No" value="${esc(a)}"><button type="button">✕</button>`;d.querySelector("button").onclick=()=>d.remove();cq.appendChild(d)};
+  for(const c of p.custom||[])addRow(c.match,c.answer);$("custom-add").onclick=()=>addRow()}
+function readProfile(){const p={};for(const el of $("profile-form").querySelectorAll("[data-k]"))p[el.dataset.k]=el.value.trim();
+  p.custom=[...$("custom-qs").querySelectorAll(".custom-q")].map(d=>{const[i1,i2]=d.querySelectorAll("input");return{match:i1.value.trim(),answer:i2.value.trim()}}).filter(c=>c.match);return p}
+function renderRules(r,supported){
+  $("rules-form").innerHTML=`<div class="form">
+    <label class="chk wide"><input type="checkbox" data-r="enabled" ${r.enabled?"checked":""}> Enable the queue (roles meeting these rules are queued after every sweep)</label>
+    <label>Minimum match score<input type="number" min="0" max="100" data-r="min_match" value="${r.min_match}"></label>
+    <label>Daily submission cap<input type="number" min="0" max="50" data-r="daily_cap" value="${r.daily_cap}"></label>
+    <label class="wide">Seniority (empty = any)<div class="chips" id="rule-levels">${LEVELS.map(l=>`<button type="button" class="${(r.levels||[]).includes(l)?"on":""}" data-l="${l}">${l}</button>`).join("")}</div></label>
+    <label class="wide">Career sites<div class="chips" id="rule-prov">${supported.map(s=>`<button type="button" class="${(r.providers||[]).includes(s)?"on":""}" data-p="${s}">${siteLabel(s)}</button>`).join("")}</div></label>
+    <label class="chk"><input type="checkbox" data-r="remote_only" ${r.remote_only?"checked":""}> Remote roles only</label>
+    <label class="chk"><input type="checkbox" data-r="skip_stale" ${r.skip_stale?"checked":""}> Skip "likely filled"</label>
+    <label class="chk"><input type="checkbox" data-r="require_tailored" ${r.require_tailored?"checked":""}> Only with a tailored resume</label>
+    <label class="chk"><input type="checkbox" data-r="auto_submit" ${r.auto_submit?"checked":""}> <b>Auto-submit without review</b></label>
+    <div class="warnbox">Recommended: leave auto-submit off and use "Prepare" so you check each form before it goes. Unattended submission is irreversible, the engine can't answer questions it has no rule for, and some employers' terms forbid automated applications. If you turn it on, keep the cap small and require a tailored resume.</div>
+  </div>`;
+  for(const id of["rule-levels","rule-prov"])$(id).addEventListener("click",e=>{const b=e.target.closest("button");if(b)b.classList.toggle("on")})}
+function readRules(){const r={};for(const el of $("rules-form").querySelectorAll("[data-r]"))r[el.dataset.r]=el.type==="checkbox"?el.checked:+el.value;
+  r.levels=[...$("rule-levels").querySelectorAll("button.on")].map(b=>b.dataset.l);r.providers=[...$("rule-prov").querySelectorAll("button.on")].map(b=>b.dataset.p);return r}
+async function loadApply(){
+  const[q,pr,ru]=await Promise.all([api("/api/apply/queue"),api("/api/apply/profile"),api("/api/apply/rules")]);
+  profile=pr.profile;rules=ru;renderProfile(profile);renderRules(rules,q.supported);
+  const active=q.queue.filter(j=>!["submitted","skipped","failed"].includes(j.apply_state));$("apply-n").textContent=`${active.length} in queue · ${q.eligible} eligible not yet queued · ${q.submitted_today} submitted in 24 h`;$("tab-apply-n").textContent=active.length||"";
+  const s=q.session;$("apply-status").innerHTML=(pr.missing.length?`<span style="color:var(--danger)">Profile incomplete: ${pr.missing.join(", ")}. Fill it in below before preparing.</span> · `:"")+(s.running?`<span class="pulse"></span>Preparing an application… watch the Chrome window.`:s.open?`Browser window open for a prepared application (since ${fmtAgo(s.since)}). Review it, press Submit there, and the role is marked Applied automatically.`:`No browser session open.`)+(rules.enabled?"":" · Rules are <b>disabled</b>: nothing is queued automatically; you can still Prepare any queued role.");
+  $("tbl-apply").innerHTML=`<tr><th>Role</th><th class="num">Match</th><th>Site</th><th>State</th><th>Report</th><th></th></tr>`+(q.queue.map(j=>{let log={};try{log=JSON.parse(j.apply_log||"{}")}catch{}
+    const rep=log.error?`<span style="color:var(--danger)">${esc(log.error)}</span>`:log.filled?`filled ${log.filled.length}${log.missing_required?.length?` · <b style="color:var(--danger)">${log.missing_required.length} required left: ${esc(log.missing_required.slice(0,4).join("; "))}</b>`:" · nothing required left"}${log.unanswered?.length?` · no rule for: ${esc(log.unanswered.slice(0,4).join("; "))}`:""}${log.resume_is_tailored===false?" · <b>original resume</b> (no tailored draft)":""}`:esc(log.note||"");
+    const can=q.supported.includes(j.site);
+    return`<tr><td><a href="${esc(j.url||"#")}" target="_blank" rel="noopener"><b>${esc(j.title)}</b></a><br><small style="color:var(--dim)">${esc(j.company||"")}${j.resume_tailored?" · tailored ✓":" · <span style='color:var(--warn)'>no tailored resume</span>"}</small></td><td class="num">${j.match_score??"–"}</td><td>${esc(siteLabel(j.site))}</td><td><span class="state ${esc(j.apply_state)}">${esc(j.apply_state.replace("_"," "))}</span><br><small style="color:var(--dim)">${j.apply_at?fmtAgo(j.apply_at):""}</small></td><td style="max-width:28rem;font-size:.78rem">${rep}</td>
+      <td style="white-space:nowrap">${can&&!["submitted"].includes(j.apply_state)?`<button class="mbtn" data-prep="${j.id}">${j.apply_state==="queued"?"Prepare":"Prepare again"}</button> `:""}${j.apply_state!=="submitted"?`<button class="mbtn" data-st="${j.id}" data-v="submitted" title="I submitted it myself">Mark submitted</button> <button class="mbtn" data-st="${j.id}" data-v="skipped">Skip</button>`:""} <button class="mbtn" data-st="${j.id}" data-v="">Remove</button></td></tr>`}).join("")||'<tr><td colspan="6" class="empty">Queue is empty. Set rules and press "Scan for eligible roles", or Prepare any role from Openings via its stage picker.</td></tr>');
+  $("tbl-apply").onclick=async e=>{const p=e.target.closest("button[data-prep]"),s=e.target.closest("button[data-st]");
+    if(p){p.disabled=true;p.textContent="Preparing…";toast("Opening the employer's form in Chrome…");try{const r=await api("/api/apply/"+p.dataset.prep+"/prepare",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});toast(r.error?"⚠ "+r.error:r.pending?r.note:r.missing_required?.length?`Filled ${r.filled.length} fields; ${r.missing_required.length} required still need you`:`Filled ${r.filled.length} fields — review and submit in the browser`)}catch(err){toast("⚠ "+err.message)}loadApply()}
+    if(s){await api("/api/apply/"+s.dataset.st+"/state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({state:s.dataset.v})});loadApply();loadStatus()}}}
+$("profile-save").addEventListener("click",async()=>{const r=await api("/api/apply/profile",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(readProfile())});toast(r.missing.length?"Saved — still missing: "+r.missing.join(", "):"Profile saved");loadApply()});
+$("rules-save").addEventListener("click",async()=>{const r=readRules();if(r.auto_submit&&!rules.auto_submit&&!confirm("Auto-submit will send applications without you reviewing them, up to the daily cap. Turn it on?"))return;await api("/api/apply/rules",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)});toast("Rules saved");loadApply()});
+$("apply-scan").addEventListener("click",async()=>{const r=await api("/api/apply/scan",{method:"POST"});toast(`${r.queued} role${r.queued===1?"":"s"} queued`);loadApply()});
+$("apply-run").addEventListener("click",async()=>{if(!confirm("Run the queue unattended? Each role that meets the rules will be filled and submitted, up to the daily cap."))return;try{await api("/api/apply/run",{method:"POST"});toast("Queue running — watch the Chrome window");setTimeout(loadApply,4000)}catch(e){toast("⚠ "+e.message)}});
+$("apply-close").addEventListener("click",async()=>{await api("/api/apply/close",{method:"POST"});toast("Browser closed");loadApply()});
+
+/* ── companies tab ────────────────────────── */
+async function loadCompanies(){companies=await api("/api/companies");loadAts();
+  const render=(flag,box,nId)=>{const list=companies.filter(c=>c.flag===flag);$(nId).textContent=list.length;
+    box.innerHTML=list.map(c=>`<div><span>${esc(c.name)} <small>· ${c.jobs} role${c.jobs===1?"":"s"}</small></span><button data-n="${esc(c.name_norm)}">remove</button></div>`).join("")||'<div style="color:var(--dim);border-style:dashed">None yet</div>';
+    box.onclick=async e=>{const b=e.target.closest("button[data-n]");if(!b)return;await api("/api/companies/"+encodeURIComponent(b.dataset.n),{method:"DELETE"});toast("Removed");loadCompanies();loadStatus()}};
+  render("watch",$("watch-list"),"watch-n");render("block",$("block-list"),"block-n")}
+for(const[fid,flag]of[["watch-form","watch"],["block-form","block"]])$(fid).addEventListener("submit",async e=>{e.preventDefault();const inp=e.target.querySelector("input");
+  try{await api("/api/companies",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:inp.value,flag})});inp.value="";toast(flag==="watch"?"Watching":"Blocked");loadCompanies();loadStatus()}catch(err){toast(err.message)}});
+
+/* ── tabs ─────────────────────────────────── */
+function setTab(t){tab=t;store("tab",t);for(const b of $("tabs").querySelectorAll("button"))b.classList.toggle("on",b.dataset.tab===t);
+  const list=t==="openings"||t==="matches";$("view-list").hidden=!list;$("view-pipeline").hidden=t!=="pipeline";$("view-insights").hidden=t!=="insights";$("view-companies").hidden=t!=="companies";$("view-apply").hidden=t!=="apply";
+  $("rail").hidden=!list;$("page").classList.toggle("wide",!list);$("resume-card").hidden=t!=="matches";$("sortbar").hidden=t==="matches";
+  $("list-title").firstChild.textContent=t==="matches"?"Best matches ":"Openings ";
+  if(list){if(t==="matches")loadResume();reload()}else if(t==="pipeline")loadPipeline();else if(t==="insights")loadInsights();else if(t==="apply")loadApply();else loadCompanies()}
+$("tabs").addEventListener("click",e=>{const b=e.target.closest("button[data-tab]");if(b)setTab(b.dataset.tab)});
+
+/* ── sticky top panel ─────────────────────── */
+const topH=()=>$("top").offsetHeight;
+function syncTopH(){document.documentElement.style.setProperty("--top-h",topH()+"px")}
+new ResizeObserver(syncTopH).observe($("top"));
+function setCollapsed(on){$("top").classList.toggle("collapsed",on);$("top-toggle").textContent=on?"Show panel ▾":"Hide panel ▴";store("topCollapsed",on);syncTopH()}
+$("top-toggle").addEventListener("click",()=>setCollapsed(!$("top").classList.contains("collapsed")));
+setCollapsed(load("topCollapsed",false)===true);
+
+/* ── wiring ───────────────────────────────── */
+$("refresh").addEventListener("click",async()=>{await fetch("/api/refresh",{method:"POST"});$("refresh").disabled=true;$("live").hidden=false;toast("Sweep started")});
+for(const id of FILTER_IDS)if(id!=="f-q")$(id).addEventListener("change",reload);
+let qt;$("f-q").addEventListener("input",()=>{clearTimeout(qt);qt=setTimeout(reload,300)});
+const SITE_LABEL={indeed:"Indeed",linkedin:"LinkedIn",glassdoor:"Glassdoor",zip_recruiter:"ZipRecruiter",google:"Google Jobs",greenhouse:"Greenhouse",lever:"Lever",ashby:"Ashby",smartrecruiters:"SmartRecruiters",workable:"Workable",bamboohr:"BambooHR",workday:"Workday",
+  oracle:"Oracle Cloud",successfactors:"SuccessFactors",cornerstone:"Cornerstone",uncareers:"UN Careers",taleo:"Taleo",reliefweb:"ReliefWeb"};
+const siteLabel=s=>SITE_LABEL[s]||(s||"").replace("_"," ");
+async function loadMeta(){const m=await api("/api/meta");const sel=$("f-term"),cur=sel.value;
+  const opt=t=>`<option value="${esc(t.term)}">${esc(t.term)} (${t.count})</option>`;const cfg=m.terms.filter(t=>t.configured),old=m.terms.filter(t=>!t.configured);
+  sel.innerHTML='<option value="">All terms</option>'+`<optgroup label="Configured searches">${cfg.map(opt).join("")}</optgroup>`+(old.length?`<optgroup label="From earlier configs">${old.map(opt).join("")}</optgroup>`:"");sel.value=cur;
+  catMeta=m.categories||[];secMeta=m.sectors||[];
+  const opts=m.country_options||[];countryLabels=Object.fromEntries(opts.map(o=>[o.code,o.label]));const cc=$("f-country"),cv=cc.value;
+  cc.innerHTML='<option value="">All countries</option>'+(opts.some(o=>o.code==="US")&&opts.some(o=>o.code==="CA")?'<option value="US,CA">US + Canada</option>':"")+opts.map(o=>`<option value="${esc(o.code)}">${esc(o.label)}</option>`).join("");setCountry(cv);
+  renderCatChips();
+  const ss=$("f-site"),cs=ss.value;const big=["indeed","linkedin","glassdoor","zip_recruiter","google"];
+  const boards=m.sites.filter(s=>big.includes(s)),ats=m.sites.filter(s=>!big.includes(s));
+  ss.innerHTML='<option value="">All sources</option>'+`<optgroup label="Job boards">${boards.map(s=>`<option value="${esc(s)}">${esc(siteLabel(s))}</option>`).join("")}</optgroup>`
+    +(ats.length?`<optgroup label="Career sites (direct)">${ats.map(s=>`<option value="${esc(s)}">${esc(siteLabel(s))}</option>`).join("")}</optgroup>`:"");ss.value=cs}
+
+loadUsers().then(()=>{loadFilters();syncStatusSeg();return Promise.all([loadStatus(),loadMeta()])}).then(()=>{const st=load("filters",null);if(st&&st["f-term"])$("f-term").value=st["f-term"];if(st&&st["f-country"]!=null)setCountry(st["f-country"]);renderCatChips();
+  const want=new URLSearchParams(location.search).get("tab");   // ?tab=pipeline etc. is bookmarkable
+  setTab(["openings","matches","pipeline","insights","companies","apply"].includes(want)?want:load("tab","openings"))});
+setInterval(tick,1000);
+setInterval(async()=>{const was=$("live").hidden===false;await loadStatus();
+  if(was&&$("live").hidden){loadMeta();if(tab==="openings"||tab==="matches")reload();else if(tab==="insights")loadInsights()}},15000);
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+.venv/
+jobradar.db
+proxies.txt
+.env
+jobradar.log
+digests/
+applications/
+browser-profile/
+__pycache__/

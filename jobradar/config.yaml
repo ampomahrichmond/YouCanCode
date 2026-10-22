@@ -1,0 +1,517 @@
+# ── JobRadar configuration ────────────────────────────────────────────
+# Edit this file, then restart the server (or wait for the next sweep).
+#
+# The sweep runs every `term` below against every `location`, on every
+# enabled site. Keep an eye on volume: terms × locations × sites × results
+# is what the boards see each cycle, and LinkedIn/Glassdoor block bursts.
+
+# ── What to search for ───────────────────────────────────────────────
+# Boards match loosely, so a handful of well-chosen phrases covers
+# Analyst → VP without listing every variant.
+# Categories group the searches and tag every stored role by title, so each
+# user can pick the categories they care about (header user switcher →
+# preferences). A role can belong to several. Sweep order = order below;
+# results are written after each term, so put what matters most first.
+categories:
+  hr:
+    label: "Human Resources"
+    terms:
+      - "human resources manager"
+      - "hr director"
+      - "hr business partner"
+      - "hris manager"
+      - "people analytics"
+    title_keywords: ["human resources", "hr", "hris", "hrbp", "people", "talent", "workforce", "recruit", "payroll", "benefits", "compensation"]
+  analytics:
+    label: "Analytics, BI & Data Science"
+    terms:
+      - "data analytics manager"
+      - "data analyst"
+      - "business intelligence"
+      - "data science manager"
+    title_keywords: ["analytics", "analyst", "business intelligence", "bi", "data science", "data scientist", "insights", "reporting"]
+  governance:
+    label: "Data Governance & Management"
+    terms:
+      - "data quality"
+      - "data retention"
+      - "data catalog implementation"
+      - "data governance manager"
+      - "senior manager data governance"
+      - "director data governance"
+      - "head of data governance"
+      - "vp data governance"
+      - "data management director"
+      - "head of data"
+      - "director metadata management"
+      - "information governance director"
+      - "records management director"
+    title_keywords: ["data governance", "governance", "data management", "metadata", "data quality", "data catalog", "records", "retention", "information governance", "information management", "privacy", "compliance", "master data", "data steward", "head of data", "data strategy", "data office"]
+  # How international organizations, development agencies and their
+  # contractors title their data roles (M&E, statistics, information
+  # management). These terms add 3 × locations searches per sweep.
+  development:
+    label: "M&E, Statistics & Development Data"
+    terms:
+      - "monitoring and evaluation"
+      - "information management officer"
+      - "statistician"
+    title_keywords: ["monitoring", "evaluation", "m&e", "mel", "meal", "statistic", "statistics", "statistician", "statistical", "economist", "knowledge management", "results measurement", "programme data", "program data", "data officer", "data specialist", "data for development"]
+
+# Extra terms outside any category (tagged "general"):
+terms: []
+
+# ── Where ────────────────────────────────────────────────────────────
+# `remote: true` asks each board for remote-only listings in that country.
+# `country` drives Indeed/Glassdoor's regional site (USA, Canada, United Arab
+# Emirates, UK, … — any jobspy country name).
+# 25 terms × 4 locations + 2 extras = 102 searches per sweep.
+locations:
+  - { name: "United States", country: "USA", remote: true }
+  - { name: "United States", country: "USA" }
+  - { name: "Canada",        country: "Canada" }
+  - { name: "United Arab Emirates", country: "United Arab Emirates" }
+  # - { name: "Canada",      country: "Canada", remote: true }
+  # - { name: "London, United Kingdom", country: "UK" }
+
+# Extra one-off (term, location) pairs, e.g. to keep a local search alive:
+searches:
+  - { term: "data governance", location: "Wilmington, DE", country: "USA" }
+  - { term: "data governance", location: "Philadelphia, PA", country: "USA" }
+
+# Sites: indeed, linkedin, glassdoor, zip_recruiter, google
+# Google Jobs aggregates Dice, Lever, Greenhouse, Workday postings.
+sites:
+  - indeed
+  - linkedin
+  - glassdoor
+  - zip_recruiter
+  - google
+
+results_per_site: 15          # per search, per site
+hours_old: 48                 # only pull postings from the last N hours
+refresh_minutes: 90           # 68 searches with LinkedIn page fetches take ~40 min
+
+# LinkedIn only hands over salary, seniority and description when we open each
+# job page (one extra request per job). Needed for the Easy Apply + salary
+# columns; set to false if LinkedIn starts returning 429s.
+linkedin_fetch_description: true
+# Second, card-only LinkedIn pass with its "Easy Apply" filter on, so the
+# dashboard can flag which LinkedIn roles apply in one click.
+linkedin_easy_apply_pass: true
+
+# ── Post-scrape filters (applied before a job is stored) ─────────────
+# Title keyword lists match whole words ("hr" won't match "three"; "vp" won't
+# match "svp", so list those separately).
+# Title must contain at least one of these (keeps the list at analyst+ level).
+# International organizations rarely say "manager": their professional grades
+# are Officer / Specialist / Adviser / Economist / Statistician / Consultant.
+title_keywords:
+  - "manager"
+  - "director"
+  - "vp"
+  - "svp"
+  - "evp"
+  - "avp"
+  - "vice president"
+  - "head"
+  - "chief"
+  - "lead"
+  - "principal"
+  - "analyst"
+  - "scientist"
+  - "business partner"
+  - "officer"
+  - "specialist"
+  - "consultant"
+  - "advisor"
+  - "adviser"
+  - "economist"
+  - "statistician"
+# Title must ALSO contain one of these (keeps it on-topic; boards return
+# plenty of "Director, Marketing" for a "director data governance" query).
+# Every category's title_keywords are added to this list automatically, so
+# only list extras here.
+title_must_include:
+  - "data"
+  - "information"
+# Title OR description must mention one of these (empty = no check).
+include_keywords: []
+# Drop if the title contains any of these.
+exclude_title_keywords:
+  - "intern"
+  - "junior"
+  - "entry level"
+  - "assistant manager"
+  - "associate manager"
+  - "coordinator"
+  - "account manager"
+  - "sales manager"
+  - "store manager"
+  - "nurse"
+  - "clinical"
+# Drop if the title OR description contains any of these.
+exclude_keywords: []
+# Only keep roles whose inferred seniority is in this list (empty = keep all).
+# Buckets: C-level, VP, Head, Director, Senior Manager, Manager, Lead, Other
+levels: []
+# Countries a role's location can resolve to (code → label shown in the
+# Country filter). Built in: US, CA, AE, GB, IE, DE, NL, CH, FR, SG, AU, IL,
+# SA, QA — the UAE and the hubs whose employers routinely hire remote talent
+# in North America. Anywhere else resolves to "Other".
+country_labels:
+  US: "United States"
+  CA: "Canada"
+  AE: "United Arab Emirates"
+  GB: "United Kingdom"
+  IE: "Ireland"
+  DE: "Germany"
+  NL: "Netherlands"
+  CH: "Switzerland"
+  FR: "France"
+  SG: "Singapore"
+  AU: "Australia"
+  IL: "Israel"
+  SA: "Saudi Arabia"
+  QA: "Qatar"
+# Keep only roles in these countries (and roles whose location gives no
+# country, e.g. "Remote"). LinkedIn "remote" searches and the international
+# organizations return roles worldwide otherwise; "Other" is always dropped.
+# Trim this list to tighten; the Country filter in the sidebar follows it.
+countries: ["US", "CA", "AE", "GB", "IE", "DE", "NL", "CH", "FR", "SG", "AU", "IL", "SA", "QA"]
+min_salary: 0                 # annual USD; 0 disables. Jobs without a salary are kept.
+remote_only: false
+
+# ── Sectors (who the employer is) ────────────────────────────────────
+# Categories describe the job; sectors describe the employer. Every stored
+# role gets one sector so the dashboard can filter by it. A role's sector
+# comes from, in order: the career site it was found on (see `organizations`),
+# an organization name/alias match, the board's industry label (`industries`
+# substrings, LinkedIn/Indeed; `=label` must equal the whole label), then
+# whole-word `companies` keywords — sectors are checked top to bottom, so put
+# the specific ones first. A keyword written in CAPITALS (or 3 letters or
+# shorter) must be the employer's whole name: "PATH" tags PATH, not "Path 2
+# Potential". Unmatched = other.
+sectors:
+  international:
+    label: "International organizations & development"
+    companies: ["united nations", "UN", "unicef", "undp", "unhcr", "unfpa", "unops", "unesco", "unido", "unaids", "un women",
+                "unrwa", "UNEP", "OCHA", "WFP", "world food programme", "world health organization", "WHO", "PAHO",
+                "pan american health organization", "FAO", "ILO", "international labour", "IOM", "international organization for migration",
+                "world bank", "IFC", "international finance corporation", "MIGA", "IMF", "international monetary fund",
+                "inter-american development bank", "idb invest", "IADB", "asian development bank", "african development bank",
+                "european bank for reconstruction", "EBRD", "european investment bank", "OECD", "WTO", "world trade organization",
+                "bank for international settlements", "global fund", "gavi", "gates foundation", "bill & melinda gates",
+                "rockefeller foundation", "ford foundation", "open society", "world vision", "save the children", "mercy corps",
+                "international rescue committee", "IRC", "oxfam", "care international", "care usa", "catholic relief services",
+                "red cross", "red crescent", "doctors without borders", "médecins sans frontières", "MSF", "world resources institute",
+                "fhi 360", "PATH", "jhpiego", "population services international", "PSI", "plan international", "action against hunger",
+                "world wildlife fund", "WWF", "nature conservancy", "conservation international", "organization of american states", "OAS",
+                "caribbean development bank", "NATO", "international atomic energy", "IAEA", "usaid", "millennium challenge",
+                "development finance corporation", "DFC", "peace corps", "BRAC", "heifer international", "PACT", "winrock", "IREX",
+                "world learning", "clinton health access", "CHAI", "partners in health", "americares", "habitat for humanity",
+                "humanitarian", "international development", "development bank", "international organization", "intergovernmental"]
+    industries: ["=international affairs"]
+  staffing:
+    label: "Staffing & recruiting agencies"
+    companies: ["robert half", "insight global", "jobgether", "ladders", "sotalent", "motion recruitment", "randstad", "adecco",
+                "manpower", "manpowergroup", "kelly services", "aerotek", "teksystems", "HAYS", "michael page", "pagegroup", "kforce",
+                "apex systems", "akkodis", "LHH", "korn ferry", "spencer stuart", "heidrick", "russell reynolds", "egon zehnder",
+                "recruiting", "recruitment", "recruiters", "staffing", "talent", "executive search", "search partners", "placement"]
+    industries: ["staffing and recruiting", "staffing", "human resources services", "recruiting"]
+  contracting:
+    label: "Government & development contractors"
+    companies: ["leidos", "SAIC", "science applications international", "CACI", "general dynamics information technology", "GDIT",
+                "general dynamics", "mantech", "peraton", "mitre", "noblis", "LMI", "ICF", "chemonics", "dai global", "DAI", "tetra tech",
+                "abt global", "abt associates", "rti international", "mathematica", "NORC", "westat", "american institutes for research",
+                "palladium", "creative associates", "social impact", "dexis", "management systems international", "MSI", "JSI", "john snow",
+                "bae systems", "northrop grumman", "lockheed martin", "raytheon", "RTX", "l3harris", "amentum", "KBR", "parsons",
+                "battelle", "CNA", "institute for defense analyses", "RAND", "maximus", "serco", "sierra nevada", "huntington ingalls",
+                "V2X", "vectrus", "DLH", "chenega", "akima", "accenture federal", "deloitte federal", "guidehouse federal", "federal",
+                "government solutions", "public sector solutions", "defense", "defence"]
+    industries: ["defense and space manufacturing", "defense & space", "government relations services", "aerospace and defense", "military"]
+  consulting:
+    label: "Consulting & professional services"
+    companies: ["mckinsey", "boston consulting", "BCG", "bain", "deloitte", "accenture", "EY", "ernst & young", "ernst and young",
+                "kpmg", "pwc", "pricewaterhousecoopers", "booz allen", "guidehouse", "oliver wyman", "marsh mclennan", "mercer",
+                "kearney", "capgemini", "slalom", "huron", "fti consulting", "alvarez & marsal", "protiviti", "west monroe",
+                "zs associates", "ZS", "gartner", "grant thornton", "baker tilly", "RSM", "BDO", "crowe", "CBIZ", "moss adams", "MNP",
+                "public consulting group", "ankura", "berkeley research", "analysis group", "charles river associates", "NERA",
+                "brattle", "tiger analytics", "fractal", "mu sigma", "latentview", "tredence", "quantiphi", "EXL", "genpact",
+                "cognizant", "infosys", "wipro", "tata consultancy", "TCS", "HCL", "ntt data", "DXC", "kyndryl", "EPAM", "thoughtworks",
+                "avanade", "ibm consulting", "publicis sapient", "ey-parthenon", "LEK", "strategy&", "roland berger",
+                "arthur d little", "simon-kucher", "point b", "north highland", "clarkston", "CGI", "sia partners", "wavestone",
+                "consulting", "consultants", "consultancy", "advisory", "advisors"]
+    industries: ["business consulting", "consulting and business services", "it services and it consulting", "management consulting",
+                 "professional services", "accounting"]
+  public:
+    label: "Government & public sector"
+    companies: ["city of", "county of", "county", "state of", "province of", "government of", "department of", "ministry", "ministère",
+                "federal reserve", "u s department", "us department", "u s army", "u s navy", "u s air force", "department of defense",
+                "authority", "commission", "municipal", "municipality", "region of", "township", "public service", "treasury board",
+                "canada revenue", "statistics canada", "service canada", "shared services canada", "government", "office of the",
+                "senate", "parliament", "legislature", "transit", "port authority", "water district", "police", "sheriff", "court",
+                "courts", "judicial"]
+    industries: ["government administration", "government", "public policy", "public safety", "armed forces", "law enforcement",
+                 "legislative"]
+  health:
+    label: "Healthcare, pharma & life sciences"
+    companies: ["health", "healthcare", "hospital", "hospitals", "medical", "clinic", "pharma", "pharmaceutical", "pharmaceuticals",
+                "therapeutics", "biotech", "biosciences", "life sciences", "medicine", "medicines", "physicians", "dental", "care",
+                "wellness", "oncology", "diagnostics", "CVS", "unitedhealth", "optum", "humana", "centene", "elevance", "anthem",
+                "cigna", "kaiser", "HCA", "mayo clinic", "cleveland clinic", "pfizer", "merck", "abbvie", "amgen", "gilead", "lilly",
+                "johnson & johnson", "bristol myers", "GSK", "novartis", "roche", "sanofi", "astrazeneca", "medtronic", "abbott",
+                "mckesson", "cardinal", "labcorp", "quest diagnostics", "extendicare", "telus health", "eurofins"]
+    industries: ["hospitals and health care", "health care", "pharmaceutical", "biotechnology", "medical", "mental health",
+                 "wellness and fitness", "veterinary"]
+  education:
+    label: "Education & research"
+    companies: ["university", "université", "college", "collège", "school", "schools", "school district", "academy",
+                "institute of technology", "polytechnic", "education", "learning", "campus", "cégep", "k12", "k-12", "research institute"]
+    industries: ["higher education", "education", "e-learning", "research services", "primary and secondary education"]
+  finance:
+    label: "Banking, insurance & financial services"
+    companies: ["bank", "banque", "bancorp", "financial", "capital", "credit union", "insurance", "assurance", "investments",
+                "investment", "asset management", "wealth", "mortgage", "securities", "trust company", "fintech", "payments",
+                "visa", "mastercard", "american express", "paypal", "fidelity", "vanguard", "blackrock", "state street",
+                "jpmorgan", "jpmorganchase", "goldman sachs", "morgan stanley", "citi", "citigroup", "wells fargo", "BMO", "RBC",
+                "northern trust", "u s bank", "us bank", "keybank", "m&t bank", "MUFG", "lpl financial", "connor clark & lunn",
+                "TD", "scotiabank", "CIBC", "manulife", "sun life", "desjardins", "intact", "AIG", "allstate", "progressive",
+                "travelers", "chubb", "metlife", "prudential", "nationwide", "LPL", "moody's", "s&p global", "fitch", "transunion",
+                "equifax", "experian", "morningstar", "bloomberg", "nasdaq", "CME", "TMX", "affirm", "coinbase", "stripe", "square"]
+    industries: ["financial services", "banking", "insurance", "investment", "capital markets", "venture capital", "private equity"]
+  energy:
+    label: "Energy, utilities & resources"
+    companies: ["energy", "power", "electric", "electricity", "utilities", "utility", "hydro", "oil", "gas", "petroleum",
+                "pipeline", "mining", "minerals", "solar", "wind", "renewables", "renewable", "nuclear", "exxon", "chevron",
+                "shell", "suncor", "enbridge", "tc energy", "duke energy", "nextera", "dominion", "exelon", "southern company",
+                "hydro one", "bc hydro", "ontario power", "PG&E", "sempra", "con edison", "water"]
+    industries: ["oil and gas", "utilities", "energy", "renewable", "mining", "electric power"]
+  media:
+    label: "Media, marketing & information services"
+    companies: ["media", "entertainment", "publishing", "broadcasting", "news", "studios", "games", "gaming", "advertising",
+                "marketing", "nbcuniversal", "disney", "warner", "paramount", "FOX", "CBC", "bell media", "corus",
+                "thomson reuters", "RELX", "elsevier", "lexisnexis", "nielsen", "nielseniq", "ipsos", "omnicom", "WPP",
+                "publicis", "interpublic", "dentsu", "netflix", "spotify"]
+    industries: ["media", "entertainment", "advertising", "broadcast", "publishing", "market research", "newspaper", "music", "movies"]
+  tech:
+    label: "Technology, software & telecom"
+    companies: ["software", "technologies", "technology", "tech", "systems", "digital", "cloud", "ai", "labs", "networks",
+                "cyber", "cybersecurity", "data", "analytics", "platform", "apps", "app", "saas", "semiconductor",
+                "semiconductors", "microsoft", "google", "amazon", "amazon.com", "AWS", "apple", "meta", "oracle", "salesforce",
+                "servicenow", "workday", "adobe", "intuit", "shopify", "nvidia", "intel", "AMD", "cisco", "IBM", "dell", "HP",
+                "snowflake", "databricks", "datadog", "palantir", "uber", "lyft", "doordash", "airbnb", "openai", "anthropic",
+                "zoox", "spacex", "anduril", "samsung", "sony", "telus", "bell", "rogers", "verizon", "AT&T", "t-mobile", "comcast",
+                "xometry", "whoop", "agoda"]
+    industries: ["software", "technology, information and internet", "it services", "information technology", "internet",
+                 "computer", "telecommunications", "semiconductor", "data infrastructure", "artificial intelligence"]
+  retail:
+    label: "Retail, consumer & hospitality"
+    companies: ["retail", "stores", "store", "walmart", "target", "costco", "home depot", "lowe's", "kroger", "loblaw", "sobeys",
+                "canadian tire", "best buy", "macy's", "nordstrom", "gap", "nike", "lululemon", "starbucks", "mcdonald's",
+                "restaurants", "restaurant", "foods", "food", "beverage", "beverages", "brands", "consumer", "grocery",
+                "supermarket", "apparel", "fashion", "hospitality", "hotels", "hotel", "resorts", "travel", "airlines", "airline",
+                "cruise", "fgl sports", "sport chek", "deckers", "abercrombie", "procter & gamble", "P&G", "unilever", "pepsico",
+                "coca-cola", "nestle", "kraft heinz", "general mills", "mondelez", "colgate", "kimberly-clark", "estée lauder", "l'oréal"]
+    industries: ["retail", "consumer goods", "food and beverage", "restaurants", "hospitality", "apparel", "travel", "airlines",
+                 "leisure", "wholesale", "consumer services", "luxury"]
+  industrial:
+    label: "Industrial, engineering, construction & real estate"
+    companies: ["manufacturing", "industries", "industrial", "motors", "automotive", "aerospace", "engineering", "construction",
+                "materials", "chemicals", "chemical", "steel", "logistics", "transportation", "freight", "rail", "railway",
+                "shipping", "supply chain", "packaging", "machinery", "equipment", "electronics", "general motors", "ford",
+                "stellantis", "toyota", "honda", "boeing", "airbus", "bombardier", "magna", "linamar", "jabil", "caterpillar",
+                "deere", "3M", "honeywell", "GE", "siemens", "ABB", "schneider", "emerson", "eaton", "cummins", "fedex", "UPS",
+                "canadian national", "canadian pacific", "JLL", "CBRE", "cushman", "colliers", "real estate", "realty", "properties",
+                "homes", "turner & townsend", "jacobs", "stantec", "WSP", "arcadis", "AECOM"]
+    industries: ["manufacturing", "industrial", "automotive", "aerospace", "construction", "engineering", "transportation",
+                 "logistics", "real estate", "chemical", "machinery", "packaging", "shipbuilding", "rail", "appliances"]
+  nonprofit:
+    label: "Nonprofits & foundations"
+    companies: ["foundation", "fondation", "nonprofit", "non-profit", "not-for-profit", "charity", "charitable", "society",
+                "association", "council", "alliance", "coalition", "institute", "YMCA", "united way", "AARP", "boys & girls",
+                "goodwill", "salvation army", "church", "ministries", "mission", "trust", "fund"]
+    industries: ["non-profit", "nonprofit", "philanthropic", "fundraising", "civic and social", "religious", "international trade and development"]
+  other:
+    label: "Other"
+    companies: []
+    industries: []
+
+# ── Organizations catalogue ──────────────────────────────────────────
+# Career sites JobRadar checks directly every sweep, each with its sector.
+# `url` is any page on the organization's careers site (Workday, Oracle Cloud,
+# SuccessFactors, Cornerstone, Taleo, UN Careers, Greenhouse, Lever…); or give
+# `provider` + `slug` explicitly. Entries without a site still teach the
+# sector classifier the name (and `aliases`) so roles found on Indeed/LinkedIn
+# are tagged. Every site listed with a URL was verified to answer on 2026-10-01.
+organizations:
+  # international financial institutions & UN system
+  - { name: "International Monetary Fund", aliases: ["IMF"], sector: international, url: "https://imf.wd5.myworkdayjobs.com/IMF" }
+  - { name: "World Bank Group", aliases: ["World Bank", "IFC", "International Finance Corporation", "MIGA"], sector: international, provider: cornerstone, slug: "worldbankgroup/1" }
+  - { name: "Inter-American Development Bank", aliases: ["IDB", "IADB", "IDB Invest", "BID"], sector: international, provider: successfactors, slug: "jobs.iadb.org" }
+  - { name: "United Nations Secretariat", aliases: ["United Nations", "UN Secretariat", "UN"], sector: international, provider: uncareers, slug: "careers.un.org" }
+  - { name: "United Nations Development Programme", aliases: ["UNDP"], sector: international, provider: oracle, slug: "estm.fa.em2.oraclecloud.com/CX_1" }
+  - { name: "UNHCR", aliases: ["UN Refugee Agency", "United Nations High Commissioner for Refugees"], sector: international, url: "https://unhcr.wd3.myworkdayjobs.com/External" }
+  - { name: "World Food Programme", aliases: ["WFP"], sector: international, url: "https://wd3.myworkdaysite.com/recruiting/wfp/job_openings" }
+  - { name: "World Health Organization", aliases: ["WHO"], sector: international, provider: taleo, slug: "careers.who.int/ex" }
+  - { name: "International Labour Organization", aliases: ["ILO"], sector: international, provider: successfactors, slug: "jobs.ilo.org" }
+  - { name: "European Bank for Reconstruction and Development", aliases: ["EBRD"], sector: international, provider: successfactors, slug: "jobs.ebrd.com" }
+  - { name: "Bank for International Settlements", aliases: ["BIS"], sector: international, url: "https://bis.wd3.myworkdayjobs.com/External" }
+  - { name: "Gates Foundation", aliases: ["Bill & Melinda Gates Foundation", "Bill and Melinda Gates Foundation"], sector: international, url: "https://gatesfoundation.wd1.myworkdayjobs.com/Gates" }
+  - { name: "World Vision", aliases: ["World Vision International", "World Vision US"], sector: international, url: "https://worldvision.wd1.myworkdayjobs.com/WorldVisionInternational" }
+  - { name: "PATH", sector: international, url: "https://path.wd1.myworkdayjobs.com/External" }
+  - { name: "International Rescue Committee", aliases: ["IRC"], sector: international, url: "https://theirc.wd1.myworkdayjobs.com/External_Careers" }
+  - { name: "American Red Cross", sector: nonprofit, url: "https://americanredcross.wd1.myworkdayjobs.com/American_Red_Cross_Careers" }
+  # name-only (their sites use systems without a public feed; roles still arrive via Indeed/LinkedIn)
+  - { name: "UNICEF", sector: international }
+  - { name: "UNOPS", sector: international }
+  - { name: "UN Women", sector: international }
+  - { name: "UNFPA", sector: international }
+  - { name: "Pan American Health Organization", aliases: ["PAHO"], sector: international }
+  - { name: "Organization of American States", aliases: ["OAS"], sector: international }
+  - { name: "Asian Development Bank", aliases: ["ADB"], sector: international }
+  - { name: "African Development Bank", aliases: ["AfDB"], sector: international }
+  - { name: "OECD", sector: international }
+  - { name: "The Global Fund", aliases: ["Global Fund"], sector: international }
+  - { name: "Gavi", aliases: ["Gavi, the Vaccine Alliance"], sector: international }
+  - { name: "Millennium Challenge Corporation", aliases: ["MCC"], sector: international }
+  # consulting & professional services
+  - { name: "PwC", aliases: ["PricewaterhouseCoopers"], sector: consulting, url: "https://pwc.wd3.myworkdayjobs.com/Global_Experienced_Careers" }
+  - { name: "EY", aliases: ["Ernst & Young", "EY-Parthenon"], sector: consulting, provider: successfactors, slug: "careers.ey.com" }
+  - { name: "Booz Allen Hamilton", aliases: ["Booz Allen"], sector: consulting, url: "https://bah.wd1.myworkdayjobs.com/BAH_Jobs" }
+  - { name: "Guidehouse", sector: consulting, url: "https://guidehouse.wd1.myworkdayjobs.com/External" }
+  - { name: "Marsh McLennan", aliases: ["Oliver Wyman", "Mercer", "Marsh", "Guy Carpenter"], sector: consulting, url: "https://mmc.wd1.myworkdayjobs.com/MMC" }
+  - { name: "Gartner", sector: consulting, url: "https://gartner.wd5.myworkdayjobs.com/EXT" }
+  - { name: "Huron Consulting Group", aliases: ["Huron"], sector: consulting, url: "https://huron.wd1.myworkdayjobs.com/huroncareers" }
+  - { name: "Protiviti", sector: consulting, url: "https://roberthalf.wd1.myworkdayjobs.com/ProtivitiNA" }
+  - { name: "Cognizant", sector: consulting, url: "https://collaborative.wd1.myworkdayjobs.com/allopenings" }
+  - { name: "BDO", aliases: ["BDO Canada", "BDO USA"], sector: consulting, url: "https://bdo.wd3.myworkdayjobs.com/BDO" }
+  - { name: "Baker Tilly Canada", aliases: ["Baker Tilly"], sector: consulting, url: "https://bakertilly.wd5.myworkdayjobs.com/BTCareers" }
+  - { name: "DXC Technology", aliases: ["DXC"], sector: consulting, url: "https://dxctechnology.wd1.myworkdayjobs.com/DXCJobs" }
+  - { name: "Genpact", sector: consulting, url: "https://genpact.wd108.myworkdayjobs.com/External_Careers" }
+  - { name: "Fractal Analytics", aliases: ["Fractal"], sector: consulting, url: "https://fractal.wd1.myworkdayjobs.com/Careers" }
+  - { name: "Ankura", sector: consulting, url: "https://ankura.wd5.myworkdayjobs.com/Ankura" }
+  - { name: "Berkeley Research Group", aliases: ["BRG"], sector: consulting, url: "https://thinkbrg.wd5.myworkdayjobs.com/BRG_External_Career_Site" }
+  - { name: "Public Consulting Group", aliases: ["PCG"], sector: consulting, url: "https://pcg.wd1.myworkdayjobs.com/PCG_External_Careers" }
+  - { name: "McKinsey & Company", aliases: ["McKinsey"], sector: consulting }
+  - { name: "Boston Consulting Group", aliases: ["BCG"], sector: consulting }
+  - { name: "Bain & Company", aliases: ["Bain"], sector: consulting }
+  - { name: "Bain Capital", sector: finance }
+  - { name: "Deloitte", aliases: ["Deloitte Canada", "Deloitte Consulting"], sector: consulting }
+  - { name: "Accenture", sector: consulting }
+  - { name: "KPMG", aliases: ["KPMG Canada", "KPMG US"], sector: consulting }
+  - { name: "Kearney", aliases: ["A.T. Kearney"], sector: consulting }
+  - { name: "Capgemini", sector: consulting }
+  - { name: "Slalom", sector: consulting }
+  - { name: "FTI Consulting", sector: consulting }
+  - { name: "Alvarez & Marsal", sector: consulting }
+  - { name: "West Monroe", sector: consulting }
+  - { name: "ZS", aliases: ["ZS Associates"], sector: consulting }
+  - { name: "Tiger Analytics", sector: consulting }
+  - { name: "Infosys", sector: consulting }
+  - { name: "Wipro", sector: consulting }
+  - { name: "Tata Consultancy Services", aliases: ["TCS"], sector: consulting }
+  - { name: "IBM Consulting", sector: consulting }
+  - { name: "MNP", sector: consulting }
+  # government & development contractors
+  - { name: "Leidos", sector: contracting, url: "https://leidos.wd5.myworkdayjobs.com/External" }
+  - { name: "CACI", aliases: ["CACI International"], sector: contracting, url: "https://caci.wd1.myworkdayjobs.com/External" }
+  - { name: "ICF", aliases: ["ICF International"], sector: contracting, url: "https://icf.wd5.myworkdayjobs.com/ICFExternal_Career_Site" }
+  - { name: "General Dynamics Information Technology", aliases: ["GDIT"], sector: contracting, url: "https://gdit.wd5.myworkdayjobs.com/External_Career_Site" }
+  - { name: "MITRE", aliases: ["The MITRE Corporation"], sector: contracting, url: "https://mitre.wd5.myworkdayjobs.com/MITRE" }
+  - { name: "ManTech", sector: contracting, url: "https://mantech.wd1.myworkdayjobs.com/External" }
+  - { name: "SAIC", aliases: ["Science Applications International Corporation"], sector: contracting }
+  - { name: "Peraton", sector: contracting }
+  - { name: "Noblis", sector: contracting }
+  - { name: "Chemonics", aliases: ["Chemonics International"], sector: contracting }
+  - { name: "DAI", aliases: ["DAI Global"], sector: contracting }
+  - { name: "Tetra Tech", sector: contracting }
+  - { name: "Abt Global", aliases: ["Abt Associates"], sector: contracting }
+  - { name: "RTI International", aliases: ["RTI"], sector: contracting }
+  - { name: "Mathematica", sector: contracting }
+  - { name: "NORC at the University of Chicago", aliases: ["NORC"], sector: contracting }
+  - { name: "Westat", sector: contracting }
+  - { name: "FHI 360", sector: contracting }
+  - { name: "Palladium", sector: contracting }
+  - { name: "Creative Associates International", aliases: ["Creative Associates"], sector: contracting }
+  - { name: "Social Impact", sector: contracting }
+  - { name: "Dexis", aliases: ["Dexis Consulting Group"], sector: contracting }
+  - { name: "Management Systems International", aliases: ["MSI"], sector: contracting }
+  - { name: "JSI", aliases: ["John Snow, Inc.", "John Snow Inc"], sector: contracting }
+  - { name: "Battelle", sector: contracting }
+  - { name: "RAND Corporation", aliases: ["RAND"], sector: contracting }
+  - { name: "Amentum", sector: contracting }
+  - { name: "KBR", sector: contracting }
+  - { name: "Parsons", aliases: ["Parsons Corporation"], sector: contracting }
+  - { name: "Maximus", sector: contracting }
+
+# ReliefWeb (UN agencies, NGOs and development contractors in one feed) needs a
+# registered application name: request one at
+# https://apidoc.reliefweb.int/parameters#appname, then set it here (or
+# JOBRADAR_RELIEFWEB_APPNAME in .env). Empty = source off.
+reliefweb:
+  appname: ""
+
+# ── Employer career sites (Tier 1) ───────────────────────────────────
+# Companies' own career sites (Greenhouse, Lever, Ashby, SmartRecruiters,
+# Workable, BambooHR, Workday, Oracle Cloud, SuccessFactors, Cornerstone,
+# Taleo, UN Careers) have public feeds and never block. Boards are discovered
+# automatically from the "apply at employer" links the big boards return,
+# seeded from `organizations` above, and can be added by pasting any careers
+# URL on the Companies tab or listing them here. They are checked first in
+# every sweep.
+ats:
+  enabled: true
+  auto_discover: true
+  resolve_per_sweep: 25      # grnh.se / workable short links resolved per sweep
+  max_new_per_board: 12      # new postings whose description is fetched per board per sweep
+  max_age_days: 21           # skip postings older than this (where the site gives a date)
+  workers: 6                 # boards checked concurrently
+  # Workday, Oracle, SuccessFactors, Cornerstone, Taleo and ReliefWeb sites are
+  # huge, so they are searched by keyword rather than listed (one request per
+  # term per site):
+  search_terms: ["data governance", "data management", "data quality", "data analytics", "human resources",
+                 "monitoring and evaluation", "information management", "statistics", "data strategy"]
+  boards: []                 # e.g. - "https://boards.greenhouse.io/acme"   or   - { provider: lever, slug: acme, sector: tech }
+
+# ── Resume matching, pipeline, digest, LLM ───────────────────────────
+# Roles not returned by the boards for this many completed sweeps are flagged
+# "likely filled" and can be archived from the Insights tab.
+stale_after_sweeps: 3
+
+# Daily digest (Markdown file in ./digests, optional email). Runs at `time`
+# in `timezone`. min_match applies only once a resume is uploaded.
+digest:
+  enabled: true
+  time: "08:00"
+  timezone: "America/New_York"
+  hours: 24            # look-back window for "new" roles
+  min_match: 60        # only roles scoring at least this
+  max_jobs: 25
+  # email:             # uncomment to email it; password via env var
+  #   smtp_host: "smtp.gmail.com"
+  #   smtp_port: 587
+  #   user: "you@gmail.com"
+  #   password_env: "JOBRADAR_SMTP_PASSWORD"
+  #   to: "you@gmail.com"
+
+# Optional Claude layer for "fit summary" and "cover letter" buttons. Needs
+# ANTHROPIC_API_KEY in the environment (or `ant auth login`). Scoring itself
+# is local and never sends the resume anywhere.
+llm_model: "claude-opus-5"
+
+# ── Proxies ──────────────────────────────────────────────────────────
+# Glassdoor and ZipRecruiter sit behind Cloudflare and return 403 to direct
+# requests; a rotating residential proxy is the only way through. Entries are
+# "user:pass@host:port" or "host:port". Keep credentials out of this file:
+#   easiest: create proxies.txt next to this file, one proxy per line — it is
+#            re-read at every sweep, no restart needed;
+#   or:      $env:JOBRADAR_PROXIES = "user:pass@gate.example.com:7777" before
+#            starting the server.
+proxies: []
+proxies_file: "proxies.txt"
+proxies_env: "JOBRADAR_PROXIES"
+# Only these boards go through the proxy (saves paid bandwidth). Empty = all.
+# Google serves this client a bot-check interstitial instead of results, so it
+# is routed via proxy too; Indeed and LinkedIn work fine direct.
+proxy_sites: ["glassdoor", "zip_recruiter", "google"]
