@@ -1,0 +1,5 @@
+.env
+*.pem
+*.log
+__pycache__/
+.claude/
